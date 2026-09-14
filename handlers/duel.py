@@ -1897,6 +1897,12 @@ async def duel_command(
     # Соперник указан напрямую.
     # --------------------------------------------------------
 
+    schedule_auto_delete(
+        context,
+        chat_id,
+        [update.message.message_id],
+    )
+
     await _process_duel_fight(
         context,
         initiator_tg,
@@ -3978,4 +3984,3 @@ async def _boss_join_timer(
             context,
             chat_id,
         )
-
