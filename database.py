@@ -94,9 +94,19 @@ def init_db():
             CREATE TABLE IF NOT EXISTS chat_settings (
                 chat_id INTEGER PRIMARY KEY,
                 forward_reply_enabled INTEGER DEFAULT 1,
-                auto_delete_enabled INTEGER DEFAULT 1
+                auto_delete_enabled INTEGER DEFAULT 1,
+                boss_enabled INTEGER DEFAULT 1
             )
         """)
+
+        # Миграция существующей БД: добавляем настройку боссов,
+        # если таблица была создана в старой версии бота.
+        cursor.execute("PRAGMA table_info(chat_settings)")
+        chat_settings_cols = [col[1] for col in cursor.fetchall()]
+        if "boss_enabled" not in chat_settings_cols:
+            cursor.execute(
+                "ALTER TABLE chat_settings ADD COLUMN boss_enabled INTEGER DEFAULT 1"
+            )
 
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='duel_users'")
         table_exists = cursor.fetchone()
@@ -164,6 +174,13 @@ def init_db():
             cursor.execute(
                 "ALTER TABLE duel_users ADD COLUMN daily_wins INTEGER DEFAULT 0"
             )
+        
+        cursor.execute("PRAGMA table_info(duel_users)")
+        cols = [col[1] for col in cursor.fetchall()]
+        if "bosses_defeated" not in cols:
+            cursor.execute(
+                "ALTER TABLE duel_users ADD COLUMN bosses_defeated INTEGER DEFAULT 0"
+            )
 
         # Fix broken initial data where points=0 and losses=20 from prior seed bug
         cursor.execute("""
@@ -228,6 +245,33 @@ def set_auto_delete_enabled(chat_id: int, enabled: bool):
             INSERT INTO chat_settings (chat_id, auto_delete_enabled)
             VALUES (?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET auto_delete_enabled = excluded.auto_delete_enabled
+        """, (chat_id, 1 if enabled else 0))
+
+
+def is_boss_enabled(chat_id: int) -> bool:
+    """Возвращает, разрешена ли ежедневная битва с боссом в чате."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT boss_enabled FROM chat_settings WHERE chat_id = ?",
+            (chat_id,),
+        )
+        row = cursor.fetchone()
+
+        # Для старых/ещё не зарегистрированных чатов значение по умолчанию —
+        # босс включён.
+        return bool(row[0]) if row and row[0] is not None else True
+
+
+def set_boss_enabled(chat_id: int, enabled: bool):
+    """Включает или выключает ежедневный запуск босса в чате."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO chat_settings (chat_id, boss_enabled)
+            VALUES (?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                boss_enabled = excluded.boss_enabled
         """, (chat_id, 1 if enabled else 0))
 
 
@@ -543,10 +587,14 @@ def get_top_beauties(chat_id: int, limit: int = 3):
 
 
 def get_all_chats():
+    """Возвращает ID групп/супергрупп, в которых бот ранее видел пользователей."""
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT chat_id FROM users")
-        return cursor.fetchall()
+        cursor.execute(
+            "SELECT DISTINCT chat_id FROM users WHERE chat_id < 0"
+        )
+        rows = cursor.fetchall()
+        return [row[0] for row in rows]
 
 
 def save_pizda_candidate(chat_id: int, message_id: int, created_at: int, used: int = 0) -> bool:
@@ -627,3 +675,50 @@ def set_bot_meta(key: str, value):
                 INSERT INTO bot_meta (key, value) VALUES (?, ?)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """, (key, value))
+            
+# ==========================================
+# 👹 БИТВЫ С БОССАМИ
+# ==========================================
+
+def get_bosses_defeated(user_id: int, chat_id: int) -> int:
+    """Возвращает количество побежденных боссов игроком в конкретном чате."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT COALESCE(bosses_defeated, 0)
+            FROM duel_users
+            WHERE user_id = ? AND chat_id = ?
+            """,
+            (user_id, chat_id),
+        )
+        row = cursor.fetchone()
+        return int(row[0]) if row else 0
+
+
+def reward_boss_victory(user_id: int, chat_id: int) -> bool:
+    """
+    Награда за победу над боссом.
+
+    Игрок:
+    - получает ровно 100 очков;
+    - увеличивает счётчик побежденных боссов;
+    - возвращается из состояния "без хуя";
+    - снимается отметка о сегодняшней краже.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            UPDATE duel_users
+            SET points = 100,
+                bosses_defeated = COALESCE(bosses_defeated, 0) + 1,
+                dick_stolen_today = 0,
+                last_stolen_by = NULL
+            WHERE user_id = ? AND chat_id = ?
+            """,
+            (user_id, chat_id),
+        )
+
+        return cursor.rowcount > 0

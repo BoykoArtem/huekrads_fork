@@ -1,34 +1,37 @@
-import logging  # логирование апдейтов и ошибок
-from datetime import time  # время ежедневного пидора дня
-import pytz  # часовой пояс для джобов
-import nest_asyncio  # вложенный asyncio-цикл (PyCharm и т.п.)
+import datetime
+import logging
 
-# Описание пунктов меню «/» и скоупы, в каких чатах их показывать
+import nest_asyncio
+import pytz
+
 from telegram import (
-    BotCommand,  # имя и описание одной команды
-    BotCommandScopeAllGroupChats,  # меню в группах
-    BotCommandScopeAllPrivateChats,  # меню в личке
-    BotCommandScopeDefault,  # запасной скоуп, если более узкий не задан
-    Update,  # типы апдейтов для polling, включая chosen_inline_result
+    BotCommand,
+    BotCommandScopeAllGroupChats,
+    Update,
 )
-
-# Сборка бота и маршрутизация апдейтов
 from telegram.ext import (
-    Application,  # тип приложения (для post_init)
-    ApplicationBuilder,  # создание приложения по токену
-    CommandHandler,  # сообщения вида /команда
-    MessageHandler,  # обычный текст и медиа
-    CallbackQueryHandler,  # нажатия inline-кнопок
-    InlineQueryHandler,  # инлайн: набор текста в поле ввода без отправки команды
-    ChosenInlineResultHandler,  # пользователь выбрал инлайн-результат
-    filters,  # отбор апдейтов: текст, фото, тип чата и т.д.
+    Application,
+    CallbackQueryHandler,
+    ChatMemberHandler,
+    ChosenInlineResultHandler,
+    CommandHandler,
+    ContextTypes,
+    InlineQueryHandler,
+    MessageHandler,
+    filters,
 )
 
-# Токен, время пидора дня и часовой пояс джобов
-from config import BOT_TOKEN, GAME_HOUR, GAME_MINUTE, DUEL_TIMEZONE
-from database import init_db  # создание таблиц SQLite при старте
+from config import (
+    BOT_TOKEN,
+    GAME_HOUR,
+    GAME_MINUTE,
+    DUEL_TIMEZONE,
+)
+from database import (
+    init_db,
+    set_boss_enabled,
+)
 
-# Основные команды: старт, топ, админка, дни рождения, тумблеры чата
 from handlers.commands import (
     start_command,
     top_command,
@@ -37,17 +40,30 @@ from handlers.commands import (
     toggle_forward_reply_command,
     toggle_autodelete_command,
 )
-from handlers.game import daily_beauty_job  # ежедневный пидор дня
-from handlers.past_pizda import schedule_past_pizda_job  # отложенные «пизда» на старые «да»
-from handlers.triggers import respond_trigger  # реакции на обычный текст в чате
-from handlers.utils import get_file_id_handler, error_handler  # file_id в личке и лог ошибок
+
+from handlers.game import (
+    daily_beauty_job,
+)
+
+from handlers.past_pizda import (
+    schedule_past_pizda_job,
+)
+
+from handlers.triggers import (
+    respond_trigger,
+)
+
+from handlers.utils import (
+    get_file_id_handler,
+    error_handler,
+)
+
 from handlers.weather import (
     weather_inline_query,
     weather_chosen_inline_result,
     weather_stub_callback,
 )
 
-# Гномья дуэль: бой, выбор соперника, интерактивные ходы, статы, топ, удаление игрока
 from handlers.duel import (
     duel_command,
     duel_select_callback,
@@ -55,118 +71,343 @@ from handlers.duel import (
     duel_stats_command,
     duel_top_command,
     duel_delete_command,
+    boss_daily_job,
+    boss_callback,
+    boss_command,
+    boss_reg_command,
+    hyperboreic_huy_daily_job,
+    hyperboreic_huy_callback,
 )
 
-# Нужно, чтобы polling работал внутри уже запущенного asyncio-цикла (PyCharm и т.п.)
-nest_asyncio.apply()
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
 
-# Подсказки в меню «/» у Telegram (личка и группы)
+logger = logging.getLogger(__name__)
+
+
 BOT_COMMANDS = [
-    BotCommand("start", "Старт"),
-    BotCommand("top", "Топ пидоров чата"),
-    BotCommand("duel", "Гномья дуэль"),
+    BotCommand("start", "Запустить бота"),
+    BotCommand("top", "Топ пидоров"),
+    BotCommand("force_pidor", "Назначить пидора"),
+    BotCommand("setbday", "Установить день рождения"),
+    BotCommand("toggle_forward", "Переключить пересылку"),
+    BotCommand("toggle_autodelete", "Автоудаление сообщений"),
+    BotCommand("duel", "Гномья дуэль на ножах"),
     BotCommand("duel_stats", "Статистика дуэлей"),
     BotCommand("duel_top", "Топ дуэлянтов"),
-    BotCommand("force_pidor", "Запустить пидора дня"),
-    BotCommand("setbday", "Задать день рождения"),
-    BotCommand("duel_delete", "Удалить игрока из дуэлей"),
-    BotCommand("toggle_forward", "Реакция на форварды"),
-    BotCommand("toggle_autodelete", "Автоудаление команд"),
+    BotCommand("duel_delete", "Удалить игрока дуэлей"),
+    BotCommand("boss", "Запустить босса"),
+    BotCommand("boss_reg", "Записаться на босса"),
 ]
 
 
-async def post_init(application: Application) -> None:
-    """Публикует список команд в Telegram, чтобы они появились в подсказках «/»."""
-    for scope in (
-        BotCommandScopeDefault(),
-        BotCommandScopeAllPrivateChats(),
-        BotCommandScopeAllGroupChats(),
-    ):
-        await application.bot.set_my_commands(BOT_COMMANDS, scope=scope)
+async def post_init(application: Application):
+    try:
+        await application.bot.set_my_commands(
+            BOT_COMMANDS,
+            scope=BotCommandScopeAllGroupChats(),
+        )
+    except Exception:
+        logger.exception("Не удалось установить команды бота")
 
 
-def main():
-    # Создаёт таблицы SQLite, если их ещё нет
+async def bot_chat_member_update(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    """
+    Отслеживает добавление/удаление бота из чата.
+
+    При добавлении бота включаем ежедневного босса.
+    При удалении — выключаем.
+    """
+    member_update = update.my_chat_member
+
+    if not member_update:
+        return
+
+    chat_id = member_update.chat.id
+
+    old_status = member_update.old_chat_member.status
+    new_status = member_update.new_chat_member.status
+
+    bot_is_in_chat = new_status in {
+        "member",
+        "administrator",
+    }
+
+    was_in_chat = old_status in {
+        "member",
+        "administrator",
+    }
+
+    if bot_is_in_chat and not was_in_chat:
+        set_boss_enabled(chat_id, True)
+
+    elif was_in_chat and not bot_is_in_chat:
+        set_boss_enabled(chat_id, False)
+
+
+async def main():
+    nest_asyncio.apply()
+
     init_db()
 
-    application = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
-
-    # Ежедневный пидор дня и отложенные «пизда» на старые «да»
-    tz = pytz.timezone(DUEL_TIMEZONE)
-    target_time = time(hour=GAME_HOUR, minute=GAME_MINUTE, second=0, tzinfo=tz)
-
-    if application.job_queue:
-        logging.info(
-            "Регистрируем daily_beauty_job на %02d:%02d (%s)",
-            GAME_HOUR,
-            GAME_MINUTE,
-            DUEL_TIMEZONE,
-        )
-
-        job = application.job_queue.run_daily(
-            daily_beauty_job,
-            time=target_time,
-            name="daily_beauty_job",
-        )
-
-        logging.info(
-            "daily_beauty_job зарегистрирован: %s",
-            job.name,
-        )
-
-        schedule_past_pizda_job(application.job_queue)
-
-        logging.info(
-            "Задачи JobQueue: %s",
-            [j.name for j in application.job_queue.jobs()],
-        )
-    else:
-        logging.error(
-            "JOB QUEUE НЕ ДОСТУПЕН! daily_beauty_job НЕ ЗАРЕГИСТРИРОВАН."
-        )
-
-    # Основные команды чата
-
-    # Основные команды чата
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("top", top_command))
-    application.add_handler(CommandHandler("force_pidor", force_pidor_command))
-    application.add_handler(CommandHandler("setbday", set_bday_command))
-    application.add_handler(CommandHandler("toggle_forward", toggle_forward_reply_command))
-    application.add_handler(CommandHandler("toggle_autodelete", toggle_autodelete_command))
-
-    # Инлайн-погода: заглушка в выборе, пасхалка подменяется после отправки
-    application.add_handler(InlineQueryHandler(weather_inline_query))
-    application.add_handler(ChosenInlineResultHandler(weather_chosen_inline_result))
-    application.add_handler(CallbackQueryHandler(weather_stub_callback, pattern="^wx"))
-
-    # Дуэли: команда, вызовы, кнопки атак/блоков, статы и админ-удаление
-    application.add_handler(CommandHandler("duel", duel_command))
-    application.add_handler(CallbackQueryHandler(duel_select_callback, pattern="^start_duel_"))
-    application.add_handler(CallbackQueryHandler(duel_action_callback, pattern="^duel_(strike|block)_"))
-    application.add_handler(CommandHandler("duel_stats", duel_stats_command))
-    application.add_handler(CommandHandler("duel_top", duel_top_command))
-    application.add_handler(CommandHandler("duel_delete", duel_delete_command))
-
-    # В личке админу отвечает file_id на фото/гиф/видео/документ
-    media_filter = (
-        filters.PHOTO | filters.ANIMATION | filters.VIDEO | filters.Document.ALL
-    ) & filters.ChatType.PRIVATE
-    application.add_handler(MessageHandler(media_filter, get_file_id_handler))
-
-    # Текстовые триггеры (да/нет, ДР, let_do и т.д.), команды сюда не попадают
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, respond_trigger)
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .build()
     )
 
-    application.add_error_handler(error_handler)
+    # ============================================================
+    # JOBS
+    # ============================================================
 
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    if application.job_queue:
+        tz = pytz.timezone(DUEL_TIMEZONE)
+
+        # Ежедневная игра / красотка
+        application.job_queue.run_daily(
+            daily_beauty_job,
+            time=datetime.time(
+                GAME_HOUR,
+                GAME_MINUTE,
+                tzinfo=tz,
+            ),
+            name="beauty_daily_job",
+        )
+
+        # Ежедневный босс в 18:00
+        application.job_queue.run_daily(
+            boss_daily_job,
+            time=datetime.time(
+                18,
+                0,
+                tzinfo=tz,
+            ),
+            name="boss_daily_job",
+        )
+
+        # Независимое событие:
+        # 4% шанс на каждой проверке, проверка каждые 15 минут.
+        application.job_queue.run_repeating(
+            hyperboreic_huy_daily_job,
+            interval=15 * 60,
+            first=60,
+            name="hyperboreic_huy_job",
+        )
+
+        # Старое событие «прошлая пизда»
+        schedule_past_pizda_job(
+            application.job_queue
+        )
+
+    # ============================================================
+    # CHAT MEMBER
+    # ============================================================
+
+    application.add_handler(
+        ChatMemberHandler(
+            bot_chat_member_update,
+            ChatMemberHandler.MY_CHAT_MEMBER,
+        )
+    )
+
+    # ============================================================
+    # COMMANDS
+    # ============================================================
+
+    application.add_handler(
+        CommandHandler(
+            "start",
+            start_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "top",
+            top_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "force_pidor",
+            force_pidor_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "setbday",
+            set_bday_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "toggle_forward",
+            toggle_forward_reply_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "toggle_autodelete",
+            toggle_autodelete_command,
+        )
+    )
+
+    # ============================================================
+    # WEATHER
+    # ============================================================
+
+    application.add_handler(
+        InlineQueryHandler(
+            weather_inline_query
+        )
+    )
+
+    application.add_handler(
+        ChosenInlineResultHandler(
+            weather_chosen_inline_result
+        )
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            weather_stub_callback,
+            pattern=r"^wx",
+        )
+    )
+
+    # ============================================================
+    # DUEL
+    # ============================================================
+
+    application.add_handler(
+        CommandHandler(
+            "duel",
+            duel_command,
+        )
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            duel_select_callback,
+            pattern=r"^start_duel_",
+        )
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            duel_action_callback,
+            pattern=r"^duel_(attack|defend)",
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "duel_stats",
+            duel_stats_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "duel_top",
+            duel_top_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "duel_delete",
+            duel_delete_command,
+        )
+    )
+
+    # ============================================================
+    # BOSS
+    # ============================================================
+
+    application.add_handler(
+        CommandHandler(
+            "boss",
+            boss_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "boss_reg",
+            boss_reg_command,
+        )
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            boss_callback,
+            pattern=r"^boss_(join|attack_|block_)",
+        )
+    )
+
+    # ============================================================
+    # HYPERBOREIC HUY
+    # ============================================================
+
+    application.add_handler(
+        CallbackQueryHandler(
+            hyperboreic_huy_callback,
+            pattern=r"^hyperboreic_huy$",
+        )
+    )
+
+    # ============================================================
+    # PRIVATE MEDIA
+    # ============================================================
+
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE
+            & ~filters.COMMAND,
+            get_file_id_handler,
+        )
+    )
+
+    # ============================================================
+    # TEXT TRIGGERS
+    # ============================================================
+
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT
+            & ~filters.COMMAND,
+            respond_trigger,
+        )
+    )
+
+    # ============================================================
+    # ERRORS
+    # ============================================================
+
+    application.add_error_handler(
+        error_handler
+    )
+
+    logger.info("Bot starting...")
+
+    await application.run_polling(
+        drop_pending_updates=False,
+    )
 
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+
+    asyncio.run(main())
