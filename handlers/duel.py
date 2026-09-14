@@ -1948,19 +1948,40 @@ async def duel_select_callback(
 
 
 # ============================================================
+# ЗВАНИЯ ЗА ХУЯНИЕ
+# ============================================================
+
+HUYANIE_TITLES = {
+    10: "🍆 Начинающий Хуянист",
+    20: "🍆 Подмастерье Хуяния",
+    30: "🍆 Практикующий Хуянист",
+    40: "🍆 Опытный Хуянист",
+    50: "🍆 Мастер Хуяния",
+    60: "🍆 Великий Хуянист",
+    70: "🍆 Архимастер Хуяния",
+    80: "🍆 Верховный Хуянист",
+    90: "🍆 Гроссмейстер Хуяния",
+    100: "👑 Великий Магистр Хуяния",
+}
+
+
+def get_huyanie_title(stolen_dicks_count: int) -> str:
+    count = int(stolen_dicks_count or 0)
+
+    if count < 10:
+        return "Нет звания"
+
+    level = min((count // 10) * 10, 100)
+
+    return HUYANIE_TITLES[level]
+
+
+# ============================================================
 # СТАТИСТИКА
 # ============================================================
 
-async def duel_stats_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    if (
-        not update.message
-        or not update.message.from_user
-        or not update.message.chat
-    ):
+async def duel_stats_command(update, context):
+    if not update.message or not update.message.from_user or not update.message.chat:
         return
 
     chat_id = update.message.chat_id
@@ -1983,12 +2004,16 @@ async def duel_stats_command(
         chat_id=chat_id,
     )
 
+    huyanie_title = get_huyanie_title(
+        user["stolen_dicks_count"]
+    )
+
     text = (
         f"📊 <b>Статистика дуэлей: {title}</b>\n\n"
         f"Очки: <b>{user['points']} / 100</b>\n"
         f"Побед: <b>{user['wins']}</b>\n"
         f"Поражений: <b>{user['losses']}</b>\n"
-        f"Украдено хуев: <b>{user['stolen_dicks_count']}</b>\n"
+        f"Хуяние: <b>{huyanie_title} ({user['stolen_dicks_count']})</b>\n"
         f"👹 Побеждено боссов: <b>{bosses_defeated}</b>\n"
         f"Статус на сегодня: <b>{status}</b>"
     )
