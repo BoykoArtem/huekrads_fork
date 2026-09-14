@@ -307,7 +307,7 @@ async def main():
     application.add_handler(
         CallbackQueryHandler(
             duel_action_callback,
-            pattern=r"^duel_(attack|defend)",
+            pattern=r"^duel_(strike|block)_",
         )
     )
 
