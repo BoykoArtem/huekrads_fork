@@ -29,6 +29,13 @@ def test_duel_public_callback_alias_and_pure_helpers():
     assert duel._plural_rounds is duel_text._plural_rounds
     assert duel._legacy_plural_rounds is duel_text._legacy_plural_rounds
     assert duel._legacy_plural_rounds_early is duel_text._legacy_plural_rounds_early
+    assert duel.TARGET_NAMES is duel_text.TARGET_NAMES
+    assert duel.ATTACK_PHRASES is duel_text.ATTACK_PHRASES
+    assert duel.HIT_PHRASES is duel_text.HIT_PHRASES
+    assert duel.BLOCK_PHRASES is duel_text.BLOCK_PHRASES
+    assert duel.MISS_PHRASES is duel_text.MISS_PHRASES
+    assert duel.SUICIDE_PHRASES is duel_text.SUICIDE_PHRASES
+    assert duel.get_round_flavor_text is duel_text.get_round_flavor_text
     assert duel._extract_username is duel_input.extract_username
     for count in (0, 9, 10, 57, 100, 101):
         assert duel.get_huyanie_title(count) == duel._legacy_get_huyanie_title(count)
@@ -44,3 +51,16 @@ def test_duel_public_callback_alias_and_pure_helpers():
     ) is None
     assert duel.get_huyanie_title(0)
     assert duel.get_round_flavor_text(1)
+
+
+def test_round_flavor_text_keeps_all_round_boundaries(monkeypatch):
+    from handlers import duel
+    from handlers import duel_text
+
+    monkeypatch.setattr(duel_text.random, "choice", lambda phrases: phrases[0])
+    assert len({
+        duel.get_round_flavor_text(1),
+        duel.get_round_flavor_text(4),
+        duel.get_round_flavor_text(8),
+        duel.get_round_flavor_text(9),
+    }) == 4
