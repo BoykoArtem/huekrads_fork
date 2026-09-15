@@ -222,6 +222,162 @@ async def test_selected_duel_runs_callbacks_through_round_change_to_result(
 
 
 @pytest.mark.asyncio
+async def test_suicide_skips_miss_roll_and_awards_defender(
+    monkeypatch,
+    fixed_duel_database,
+    fake_context,
+):
+    import database
+    from handlers import duel
+
+    attacker_tg = make_user(31, "suicidal_attacker")
+    defender_tg = make_user(32, "suicide_winner")
+    attacker = database.get_or_create_duel_user(attacker_tg, CHAT_ID)
+    defender = database.get_or_create_duel_user(defender_tg, CHAT_ID)
+    tasks = install_fake_tasks(monkeypatch, duel)
+    monkeypatch.setattr(duel.random, "choice", lambda values: values[0])
+    pending_rolls = iter((0.0, 1.0))
+    observed_rolls = []
+
+    def random_roll():
+        value = next(pending_rolls)
+        observed_rolls.append(value)
+        return value
+
+    real_transaction = duel.execute_duel_transaction
+    transaction_calls = []
+
+    def execute_transaction(**kwargs):
+        assert observed_rolls == [0.0, 1.0]
+        transaction_calls.append(kwargs)
+        return real_transaction(**kwargs)
+
+    monkeypatch.setattr(duel.random, "random", random_roll)
+    monkeypatch.setattr(duel, "execute_duel_transaction", execute_transaction)
+
+    await duel._start_interactive_fight(
+        fake_context,
+        CHAT_ID,
+        attacker_tg,
+        defender_tg,
+        attacker,
+        defender,
+    )
+    strike_update, _ = callback_update("duel_strike_head_1", attacker_tg)
+    await duel.duel_strike_callback(strike_update, fake_context)
+    block_update, _ = callback_update("duel_block_body_2", defender_tg)
+    await duel.duel_strike_callback(block_update, fake_context)
+
+    assert observed_rolls == [0.0, 1.0]
+    assert len(transaction_calls) == 1
+    assert transaction_calls[0]["winner_user"]["user_id"] == defender_tg.id
+    assert transaction_calls[0]["loser_user"]["user_id"] == attacker_tg.id
+    assert transaction_calls[0]["is_dick_stolen"] is False
+    assert tasks[1].cancelled is True
+    assert CHAT_ID not in duel.ACTIVE_DUELS
+
+    refreshed_attacker = database.get_duel_user_by_username(
+        "suicidal_attacker",
+        CHAT_ID,
+    )
+    refreshed_defender = database.get_duel_user_by_username(
+        "suicide_winner",
+        CHAT_ID,
+    )
+    assert (
+        refreshed_attacker["points"],
+        refreshed_attacker["wins"],
+        refreshed_attacker["losses"],
+        refreshed_attacker["dick_stolen_today"],
+        refreshed_attacker["dick_stolen_count"],
+        refreshed_attacker["last_stolen_by"],
+    ) == (15, 0, 1, False, 0, None)
+    assert (
+        refreshed_defender["points"],
+        refreshed_defender["wins"],
+        refreshed_defender["losses"],
+        refreshed_defender["daily_wins"],
+        refreshed_defender["stolen_dicks_count"],
+    ) == (30, 1, 0, 1, 0)
+
+
+@pytest.mark.asyncio
+async def test_miss_advances_round_without_changing_combat_stats(
+    monkeypatch,
+    fixed_duel_database,
+    fake_context,
+):
+    import database
+    from handlers import duel
+
+    attacker_tg = make_user(41, "missing_attacker")
+    defender_tg = make_user(42, "miss_defender")
+    attacker = database.get_or_create_duel_user(attacker_tg, CHAT_ID)
+    defender = database.get_or_create_duel_user(defender_tg, CHAT_ID)
+    tasks = install_fake_tasks(monkeypatch, duel)
+    monkeypatch.setattr(duel.random, "choice", lambda values: values[0])
+    pending_rolls = iter((0.5, 0.0))
+    observed_rolls = []
+
+    def random_roll():
+        value = next(pending_rolls)
+        observed_rolls.append(value)
+        return value
+
+    monkeypatch.setattr(duel.random, "random", random_roll)
+
+    await duel._start_interactive_fight(
+        fake_context,
+        CHAT_ID,
+        attacker_tg,
+        defender_tg,
+        attacker,
+        defender,
+    )
+    original_state = duel.ACTIVE_DUELS[CHAT_ID]
+    strike_update, _ = callback_update("duel_strike_head_1", attacker_tg)
+    await duel.duel_strike_callback(strike_update, fake_context)
+    block_update, _ = callback_update("duel_block_body_2", defender_tg)
+    await duel.duel_strike_callback(block_update, fake_context)
+
+    state = duel.ACTIVE_DUELS[CHAT_ID]
+    assert observed_rolls == [0.5, 0.0]
+    assert state is original_state
+    assert state["attacker_tg"] is defender_tg
+    assert state["defender_tg"] is attacker_tg
+    assert state["attacker_data"] is defender
+    assert state["defender_data"] is attacker
+    assert state["phase"] == "attack"
+    assert state["attack_zone"] is None
+    assert state["round"] == 2
+    assert state["turn_id"] == 3
+    assert len(tasks) == 3
+    assert tasks[1].cancelled is True
+    assert state["turn_task"] is tasks[2]
+    assert tasks[2].cancelled is False
+
+    refreshed_attacker = database.get_duel_user_by_username(
+        "missing_attacker",
+        CHAT_ID,
+    )
+    refreshed_defender = database.get_duel_user_by_username(
+        "miss_defender",
+        CHAT_ID,
+    )
+    for participant in (refreshed_attacker, refreshed_defender):
+        assert (
+            participant["points"],
+            participant["wins"],
+            participant["losses"],
+            participant["daily_wins"],
+            participant["dick_stolen_today"],
+            participant["stolen_dicks_count"],
+            participant["dick_stolen_count"],
+            participant["last_stolen_by"],
+        ) == (20, 0, 0, 0, False, 0, 0, None)
+
+
+@pytest.mark.asyncio
 async def test_attack_timeout_moves_to_block_and_stale_timer_is_ignored(
     monkeypatch,
     fixed_duel_database,
