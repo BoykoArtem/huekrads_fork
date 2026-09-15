@@ -13,6 +13,45 @@ def _resolve_zone_outcome(strike_zone: str, block_zone: str) -> str:
     return "block" if strike_zone == block_zone else "hit"
 
 
+def _build_duel_result_plan(
+    winner: dict,
+    loser: dict,
+    is_dick_stolen: bool,
+    winner_title: str,
+    max_daily_points: int,
+) -> dict:
+    winner_points = min(max_daily_points, winner["points"] + 10)
+    loser_points = max(0, loser["points"] - 5)
+    result_plan = {
+        "is_dick_stolen": is_dick_stolen,
+        "winner_reached_max": (
+            winner["points"] < max_daily_points
+            and winner_points >= max_daily_points
+        ),
+        "winner": {
+            "user_id": winner["user_id"],
+            "points": winner_points,
+            "wins_increment": 1,
+            "daily_wins_increment": 1,
+            "stolen_dicks_count_increment": 1 if is_dick_stolen else 0,
+        },
+        "loser": {
+            "user_id": loser["user_id"],
+            "points": loser_points,
+            "losses_increment": 1,
+        },
+    }
+
+    if is_dick_stolen:
+        result_plan["loser"].update({
+            "dick_stolen_count_increment": 1,
+            "dick_stolen_today": 1,
+            "last_stolen_by": winner_title,
+        })
+
+    return result_plan
+
+
 def _set_attack_choice(duel_state: dict, strike_zone: str) -> None:
     duel_state["attack_zone"] = strike_zone
     duel_state["phase"] = "block"

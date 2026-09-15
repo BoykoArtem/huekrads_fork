@@ -1,10 +1,107 @@
 from handlers.duel_state import (
     _advance_duel_round,
+    _build_duel_result_plan,
     _is_miss_roll,
     _is_suicide_roll,
     _resolve_zone_outcome,
     _set_attack_choice,
 )
+
+
+def test_build_duel_result_plan_without_steal():
+    plan = _build_duel_result_plan(
+        {"user_id": 1, "points": 20},
+        {"user_id": 2, "points": 20},
+        False,
+        "Winner",
+        100,
+    )
+
+    assert plan == {
+        "is_dick_stolen": False,
+        "winner_reached_max": False,
+        "winner": {
+            "user_id": 1,
+            "points": 30,
+            "wins_increment": 1,
+            "daily_wins_increment": 1,
+            "stolen_dicks_count_increment": 0,
+        },
+        "loser": {
+            "user_id": 2,
+            "points": 15,
+            "losses_increment": 1,
+        },
+    }
+    assert "dick_stolen_count_increment" not in plan["loser"]
+    assert "dick_stolen_today" not in plan["loser"]
+    assert "last_stolen_by" not in plan["loser"]
+
+
+def test_build_duel_result_plan_caps_points_and_marks_max_transition():
+    plan = _build_duel_result_plan(
+        {"user_id": 1, "points": 95},
+        {"user_id": 2, "points": 3},
+        False,
+        "Winner",
+        100,
+    )
+
+    assert plan["winner"]["points"] == 100
+    assert plan["loser"]["points"] == 0
+    assert plan["winner_reached_max"] is True
+    assert _build_duel_result_plan(
+        {"user_id": 1, "points": 89},
+        {"user_id": 2, "points": 20},
+        False,
+        "Winner",
+        100,
+    )["winner_reached_max"] is False
+    assert _build_duel_result_plan(
+        {"user_id": 1, "points": 100},
+        {"user_id": 2, "points": 20},
+        False,
+        "Winner",
+        100,
+    )["winner_reached_max"] is False
+
+
+def test_build_duel_result_plan_with_steal():
+    plan = _build_duel_result_plan(
+        {"user_id": 1, "points": 40},
+        {"user_id": 2, "points": 25},
+        True,
+        "Prepared Winner",
+        100,
+    )
+
+    assert plan["winner"]["stolen_dicks_count_increment"] == 1
+    assert plan["loser"] == {
+        "user_id": 2,
+        "points": 20,
+        "losses_increment": 1,
+        "dick_stolen_count_increment": 1,
+        "dick_stolen_today": 1,
+        "last_stolen_by": "Prepared Winner",
+    }
+
+
+def test_build_duel_result_plan_does_not_mutate_snapshots():
+    winner = {"user_id": 1, "points": 95, "wins": 7, "nested": {"value": 1}}
+    loser = {"user_id": 2, "points": 3, "losses": 4, "nested": {"value": 2}}
+    winner_before = {**winner, "nested": winner["nested"].copy()}
+    loser_before = {**loser, "nested": loser["nested"].copy()}
+
+    _build_duel_result_plan(
+        winner,
+        loser,
+        True,
+        "Winner",
+        100,
+    )
+
+    assert winner == winner_before
+    assert loser == loser_before
 
 
 def test_suicide_roll_boundary():

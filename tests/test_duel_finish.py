@@ -330,7 +330,7 @@ async def test_finish_duel_transaction_error_clears_state_and_schedules_error(
     monkeypatch.setattr(duel.random, "choice", presentation_choice)
     monkeypatch.setattr(
         duel,
-        "execute_duel_transaction",
+        "apply_duel_result_plan",
         Mock(side_effect=RuntimeError("database failed")),
     )
     fake_context.bot.send_message = AsyncMock(

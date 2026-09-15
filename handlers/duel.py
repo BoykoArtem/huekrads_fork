@@ -21,7 +21,7 @@ from database import (
     get_or_create_duel_user,
     get_duel_user_by_username,
     delete_duel_user_by_username,
-    execute_duel_transaction,
+    apply_duel_result_plan,
     get_duel_top,
     format_user_title,
     get_dick_steal_chance,
@@ -56,6 +56,7 @@ from handlers.duel_formatting import (
 from handlers.duel_input import extract_username as _extract_username
 from handlers.duel_state import (
     _advance_duel_round,
+    _build_duel_result_plan,
     _is_miss_roll,
     _is_suicide_roll,
     _resolve_zone_outcome,
@@ -964,11 +965,17 @@ async def _finish_duel(
 
     try:
 
-        w_after, l_after = execute_duel_transaction(
-            chat_id=chat_id,
-            winner_user=winner,
-            loser_user=loser,
-            is_dick_stolen=is_dick_stolen,
+        win_title = format_user_title(winner)
+        result_plan = _build_duel_result_plan(
+            winner,
+            loser,
+            is_dick_stolen,
+            win_title,
+            MAX_DAILY_POINTS,
+        )
+        w_after, l_after = apply_duel_result_plan(
+            chat_id,
+            result_plan,
         )
 
     except Exception:
@@ -986,7 +993,6 @@ async def _finish_duel(
 
         return
 
-    win_title = format_user_title(winner)
     lose_title = format_user_title(loser)
 
     res_msg = (
@@ -1056,10 +1062,7 @@ async def _finish_duel(
             to_delete,
         )
 
-    reached_max = (
-        winner["points"] < MAX_DAILY_POINTS
-        and w_after >= MAX_DAILY_POINTS
-    )
+    reached_max = result_plan["winner_reached_max"]
 
     if reached_max and WINNER_100_PTS_GIF:
 

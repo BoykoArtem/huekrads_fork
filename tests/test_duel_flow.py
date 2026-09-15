@@ -244,16 +244,16 @@ async def test_suicide_skips_miss_roll_and_awards_defender(
         observed_rolls.append(value)
         return value
 
-    real_transaction = duel.execute_duel_transaction
-    transaction_calls = []
+    real_apply_result_plan = duel.apply_duel_result_plan
+    persistence_calls = []
 
-    def execute_transaction(**kwargs):
+    def apply_result_plan(chat_id, result_plan):
         assert observed_rolls == [0.0, 1.0]
-        transaction_calls.append(kwargs)
-        return real_transaction(**kwargs)
+        persistence_calls.append((chat_id, result_plan))
+        return real_apply_result_plan(chat_id, result_plan)
 
     monkeypatch.setattr(duel.random, "random", random_roll)
-    monkeypatch.setattr(duel, "execute_duel_transaction", execute_transaction)
+    monkeypatch.setattr(duel, "apply_duel_result_plan", apply_result_plan)
 
     await duel._start_interactive_fight(
         fake_context,
@@ -269,10 +269,12 @@ async def test_suicide_skips_miss_roll_and_awards_defender(
     await duel.duel_strike_callback(block_update, fake_context)
 
     assert observed_rolls == [0.0, 1.0]
-    assert len(transaction_calls) == 1
-    assert transaction_calls[0]["winner_user"]["user_id"] == defender_tg.id
-    assert transaction_calls[0]["loser_user"]["user_id"] == attacker_tg.id
-    assert transaction_calls[0]["is_dick_stolen"] is False
+    assert len(persistence_calls) == 1
+    assert persistence_calls[0][0] == CHAT_ID
+    result_plan = persistence_calls[0][1]
+    assert result_plan["winner"]["user_id"] == defender_tg.id
+    assert result_plan["loser"]["user_id"] == attacker_tg.id
+    assert result_plan["is_dick_stolen"] is False
     assert tasks[1].cancelled is True
     assert CHAT_ID not in duel.ACTIVE_DUELS
 
