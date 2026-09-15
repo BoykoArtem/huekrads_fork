@@ -1903,6 +1903,25 @@ async def duel_command(
 
     initiator_tg = update.message.from_user
 
+    # --------------------------------------------------------
+    # Проверяем наличие хуя ДО выбора соперника.
+    # --------------------------------------------------------
+    initiator = get_or_create_duel_user(
+        initiator_tg,
+        chat_id,
+    )
+
+    if initiator["dick_stolen_today"]:
+        await send_and_schedule(
+            update,
+            context,
+            (
+                "💀 <b>Ты сегодня уже без хуя.</b> "
+                "До завтра драться нельзя."
+            ),
+        )
+        return
+
     target_username = _extract_username(
         update,
         context,
