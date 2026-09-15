@@ -1,6 +1,6 @@
 import sqlite3
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -485,3 +485,265 @@ async def test_duel_command_rejects_ineligible_participant(
     start_fight.assert_not_awaited()
     assert CHAT_ID not in duel.ACTIVE_DUELS
     assert message.reply_text.await_count + fake_context.bot.send_message.await_count == 1
+
+
+def admission_user(user_id, username, *, points=20, dick_stolen_today=False):
+    return {
+        "user_id": user_id,
+        "username": username,
+        "points": points,
+        "dick_stolen_today": dick_stolen_today,
+    }
+
+
+def install_admission_spies(monkeypatch, duel):
+    initiator_lookup = Mock()
+    target_lookup = Mock()
+    choice = Mock()
+    start_fight = AsyncMock()
+    monkeypatch.setattr(duel, "get_or_create_duel_user", initiator_lookup)
+    monkeypatch.setattr(duel, "get_duel_user_by_username", target_lookup)
+    monkeypatch.setattr(duel.random, "choice", choice)
+    monkeypatch.setattr(duel, "_start_interactive_fight", start_fight)
+    return initiator_lookup, target_lookup, choice, start_fight
+
+
+def assert_admission_did_not_start(duel, choice, start_fight):
+    choice.assert_not_called()
+    start_fight.assert_not_awaited()
+    assert CHAT_ID not in duel.ACTIVE_DUELS
+
+
+@pytest.mark.asyncio
+async def test_process_duel_fight_active_duel_precedes_all_other_admission_checks(
+    monkeypatch,
+    fake_context,
+):
+    from handlers import duel
+
+    initiator = make_user(501, "initiator")
+    existing_duel = {"phase": "attack", "marker": "unchanged"}
+    duel.ACTIVE_DUELS[CHAT_ID] = existing_duel
+    before = dict(existing_duel)
+    initiator_lookup, target_lookup, choice, start_fight = install_admission_spies(
+        monkeypatch, duel
+    )
+
+    await duel._process_duel_fight(
+        fake_context,
+        initiator,
+        "initiator",
+        CHAT_ID,
+    )
+
+    initiator_lookup.assert_not_called()
+    target_lookup.assert_not_called()
+    choice.assert_not_called()
+    start_fight.assert_not_awaited()
+    assert duel.ACTIVE_DUELS[CHAT_ID] is existing_duel
+    assert existing_duel == before
+    assert "уже идет дуэль" in fake_context.bot.send_message.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_process_duel_fight_username_self_target_precedes_eligibility_lookup(
+    monkeypatch,
+    fake_context,
+):
+    from handlers import duel
+
+    initiator = make_user(502, "CaseSensitiveName")
+    initiator_lookup, target_lookup, choice, start_fight = install_admission_spies(
+        monkeypatch, duel
+    )
+
+    await duel._process_duel_fight(
+        fake_context,
+        initiator,
+        "casesensitivename",
+        CHAT_ID,
+    )
+
+    initiator_lookup.assert_not_called()
+    target_lookup.assert_not_called()
+    assert_admission_did_not_start(duel, choice, start_fight)
+    assert "самого себя" in fake_context.bot.send_message.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_process_duel_fight_initiator_no_dick_precedes_zero_points(
+    monkeypatch,
+    fake_context,
+):
+    from handlers import duel
+
+    initiator_tg = make_user(503, "blocked_initiator")
+    initiator_lookup, target_lookup, choice, start_fight = install_admission_spies(
+        monkeypatch, duel
+    )
+    initiator_lookup.return_value = admission_user(
+        initiator_tg.id,
+        initiator_tg.username,
+        points=0,
+        dick_stolen_today=True,
+    )
+
+    await duel._process_duel_fight(
+        fake_context,
+        initiator_tg,
+        "opponent",
+        CHAT_ID,
+    )
+
+    initiator_lookup.assert_called_once_with(initiator_tg, CHAT_ID)
+    target_lookup.assert_not_called()
+    assert_admission_did_not_start(duel, choice, start_fight)
+    denial = fake_context.bot.send_message.await_args.args[1]
+    assert "без хуя" in denial
+    assert "0 очков" not in denial
+
+
+@pytest.mark.asyncio
+async def test_process_duel_fight_opponent_no_dick_precedes_zero_points(
+    monkeypatch,
+    fake_context,
+):
+    from handlers import duel
+
+    initiator_tg = make_user(504, "eligible_initiator")
+    initiator_lookup, target_lookup, choice, start_fight = install_admission_spies(
+        monkeypatch, duel
+    )
+    initiator_lookup.return_value = admission_user(
+        initiator_tg.id,
+        initiator_tg.username,
+    )
+    target_lookup.return_value = admission_user(
+        505,
+        "blocked_opponent",
+        points=0,
+        dick_stolen_today=True,
+    )
+
+    await duel._process_duel_fight(
+        fake_context,
+        initiator_tg,
+        "blocked_opponent",
+        CHAT_ID,
+    )
+
+    target_lookup.assert_called_once_with("blocked_opponent", CHAT_ID)
+    assert_admission_did_not_start(duel, choice, start_fight)
+    denial = fake_context.bot.send_message.await_args.args[1]
+    assert "без хуя" in denial
+    assert "0 очков" not in denial
+
+
+@pytest.mark.asyncio
+async def test_process_duel_fight_user_id_self_target_precedes_opponent_eligibility(
+    monkeypatch,
+    fake_context,
+):
+    from handlers import duel
+
+    initiator_tg = make_user(506, "initiator_username")
+    initiator_lookup, target_lookup, choice, start_fight = install_admission_spies(
+        monkeypatch, duel
+    )
+    initiator_lookup.return_value = admission_user(
+        initiator_tg.id,
+        initiator_tg.username,
+    )
+    target_lookup.return_value = admission_user(
+        initiator_tg.id,
+        "different_target_name",
+        points=0,
+        dick_stolen_today=True,
+    )
+
+    await duel._process_duel_fight(
+        fake_context,
+        initiator_tg,
+        "different_target_name",
+        CHAT_ID,
+    )
+
+    target_lookup.assert_called_once_with("different_target_name", CHAT_ID)
+    assert_admission_did_not_start(duel, choice, start_fight)
+    denial = fake_context.bot.send_message.await_args.args[1]
+    assert "самого себя" in denial
+    assert "без хуя" not in denial
+
+
+@pytest.mark.asyncio
+async def test_process_duel_fight_unknown_target_denies_before_rng_or_start(
+    monkeypatch,
+    fake_context,
+):
+    from handlers import duel
+
+    initiator_tg = make_user(507, "eligible_initiator")
+    initiator_lookup, target_lookup, choice, start_fight = install_admission_spies(
+        monkeypatch, duel
+    )
+    initiator_lookup.return_value = admission_user(
+        initiator_tg.id,
+        initiator_tg.username,
+    )
+    target_lookup.return_value = None
+
+    await duel._process_duel_fight(
+        fake_context,
+        initiator_tg,
+        "unknown_target",
+        CHAT_ID,
+    )
+
+    target_lookup.assert_called_once_with("unknown_target", CHAT_ID)
+    assert_admission_did_not_start(duel, choice, start_fight)
+    assert "не найден" in fake_context.bot.send_message.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_duel_command_no_dick_fast_fails_before_target_resolution(
+    monkeypatch,
+    fake_context,
+):
+    from handlers import duel
+
+    initiator_tg = make_user(508, "command_blocked")
+    initiator_lookup = Mock(
+        return_value=admission_user(
+            initiator_tg.id,
+            initiator_tg.username,
+            dick_stolen_today=True,
+        )
+    )
+    process_fight = AsyncMock()
+    extract_username = Mock(side_effect=AssertionError("target parsing must not run"))
+    top_lookup = Mock(side_effect=AssertionError("top lookup must not run"))
+    send_and_schedule = AsyncMock()
+    monkeypatch.setattr(duel, "get_or_create_duel_user", initiator_lookup)
+    monkeypatch.setattr(duel, "_process_duel_fight", process_fight)
+    monkeypatch.setattr(duel, "_extract_username", extract_username)
+    monkeypatch.setattr(duel, "get_duel_top", top_lookup)
+    monkeypatch.setattr(duel, "send_and_schedule", send_and_schedule)
+    message = SimpleNamespace(
+        from_user=initiator_tg,
+        chat=SimpleNamespace(id=CHAT_ID),
+        chat_id=CHAT_ID,
+        message_id=508,
+        text="/duel @ignored_target",
+    )
+    update = SimpleNamespace(message=message)
+
+    await duel.duel_command(update, fake_context)
+
+    initiator_lookup.assert_called_once_with(initiator_tg, CHAT_ID)
+    extract_username.assert_not_called()
+    top_lookup.assert_not_called()
+    process_fight.assert_not_awaited()
+    send_and_schedule.assert_awaited_once()
+    assert send_and_schedule.await_args.args[:2] == (update, fake_context)
+    assert "Ты сегодня уже без хуя" in send_and_schedule.await_args.args[2]
+    assert CHAT_ID not in duel.ACTIVE_DUELS
