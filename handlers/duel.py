@@ -2,10 +2,7 @@ import asyncio
 import json
 import logging
 import random
-import sqlite3
-from datetime import datetime, time as dt_time
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, Forbidden
@@ -15,7 +12,6 @@ from config import (
     ADMIN_IDS,
     WINNER_100_PTS_GIF,
     MAX_DAILY_POINTS,
-    DUEL_TIMEZONE,
 )
 from database import (
     get_or_create_duel_user,
@@ -87,10 +83,6 @@ from handlers.duel_messaging import (
 )
 from handlers.hyperborean_event import (
     ACTIVE_HYPERBOREAN_EVENTS,
-    HYPERBOREAN_HUY_CHANCE,
-    HYPERBOREAN_HUY_CHECK_MINUTES,
-    _claim_hyperboreic_huy,
-    _spawn_hyperboreic_huy,
     hyperboreic_huy_callback,
     hyperboreic_huy_daily_job,
 )
@@ -98,11 +90,8 @@ from handlers.boss_registration import (
     _boss_clear_registrations,
     _boss_get_registered_chat_ids,
     _boss_get_registered_users,
-    _boss_reg_timezone,
     _boss_register_user,
-    _boss_registration_connect,
     _boss_registration_is_open,
-    _boss_today,
 )
 
 MOVE_TIMEOUT = 10  # 10 секунд на ход
@@ -161,7 +150,6 @@ ACTIVE_DUELS = {}
 #     "task": None,
 #     "lock": asyncio.Lock(),
 # }
-BOSS_MOVE_TIMEOUT = 10
 
 
 BOSSES = [
@@ -1778,26 +1766,6 @@ def _boss_block_keyboard(round_num: int):
 # ------------------------------------------------------------
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ------------------------------------------------------------
-
-def _legacy_boss_alive_players(battle):
-    return [
-        participant
-        for participant in battle["participants"].values()
-        if participant["alive"]
-    ]
-
-
-def _legacy_boss_all_alive_chosen(battle, field):
-    alive = _boss_alive_players(battle)
-
-    if not alive:
-        return False
-
-    return all(
-        participant.get(field) is not None
-        for participant in alive
-    )
-
 
 def _legacy_boss_phase_status(participant, phase):
     if not participant["alive"]:
