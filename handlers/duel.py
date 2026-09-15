@@ -54,6 +54,7 @@ from handlers.duel_formatting import (
     boss_player_title as _boss_player_title,
 )
 from handlers.duel_input import extract_username as _extract_username
+from handlers.duel_state import _advance_duel_round, _set_attack_choice
 from handlers.hyperborean_event import (
     ACTIVE_HYPERBOREAN_EVENTS,
     HYPERBOREAN_HUY_CHANCE,
@@ -714,13 +715,11 @@ async def _process_attack_choice(
     if not duel:
         return
 
-    duel["attack_zone"] = strike_zone
 
     # Теперь ход принадлежит защищающемуся.
-    duel["phase"] = "block"
 
     # Новый turn_id = новая клавиатура.
-    duel["turn_id"] += 1
+    _set_attack_choice(duel, strike_zone)
 
     att_title = format_user_title(
         duel["attacker_data"]
@@ -842,23 +841,9 @@ async def _process_block_choice(
         )
 
         # Смена ролей.
-        duel["attacker_tg"], duel["defender_tg"] = (
-            duel["defender_tg"],
-            duel["attacker_tg"],
-        )
-
-        duel["attacker_data"], duel["defender_data"] = (
-            duel["defender_data"],
-            duel["attacker_data"],
-        )
-
-        duel["phase"] = "attack"
-        duel["attack_zone"] = None
-        duel["round"] += 1
+        _advance_duel_round(duel)
 
         # Новый ход = новая кнопка.
-        duel["turn_id"] += 1
-
         new_att_title = format_user_title(
             duel["attacker_data"]
         )
@@ -932,23 +917,9 @@ async def _process_block_choice(
         )
 
         # Смена ролей.
-        duel["attacker_tg"], duel["defender_tg"] = (
-            duel["defender_tg"],
-            duel["attacker_tg"],
-        )
-
-        duel["attacker_data"], duel["defender_data"] = (
-            duel["defender_data"],
-            duel["attacker_data"],
-        )
-
-        duel["phase"] = "attack"
-        duel["attack_zone"] = None
-        duel["round"] += 1
+        _advance_duel_round(duel)
 
         # Новый ход = новая кнопка.
-        duel["turn_id"] += 1
-
         new_att_title = format_user_title(
             duel["attacker_data"]
         )
