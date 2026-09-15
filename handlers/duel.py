@@ -2,10 +2,7 @@ import asyncio
 import json
 import logging
 import random
-import sqlite3
-from datetime import datetime, time as dt_time
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, Forbidden
@@ -15,13 +12,12 @@ from config import (
     ADMIN_IDS,
     WINNER_100_PTS_GIF,
     MAX_DAILY_POINTS,
-    DUEL_TIMEZONE,
 )
 from database import (
     get_or_create_duel_user,
     get_duel_user_by_username,
     delete_duel_user_by_username,
-    execute_duel_transaction,
+    apply_duel_result_plan,
     get_duel_top,
     format_user_title,
     get_dick_steal_chance,
@@ -31,8 +27,73 @@ from database import (
     is_boss_enabled,
     set_boss_enabled,
 )
+from handlers.duel_text import (
+    _boss_alive_players,
+    _boss_all_alive_chosen,
+    _boss_battle_hero,
+    _boss_phase_status,
+    _legacy_plural_rounds,
+    _legacy_plural_rounds_early,
+    _plural_rounds,
+    get_huyanie_title,
+    ATTACK_PHRASES,
+    BLOCK_PHRASES,
+    HIT_PHRASES,
+    MISS_PHRASES,
+    SUICIDE_PHRASES,
+    TARGET_NAMES,
+    _build_duel_block_text,
+    _build_duel_miss_text,
+    get_round_flavor_text,
+)
+from handlers.duel_formatting import (
+    _boss_phase_text,
+    _boss_players_status_text,
+    boss_player_title as _boss_player_title,
+)
+from handlers.boss_presentation import (
+    BOSS_REQUIRED_HITS,
+    BOSS_ZONE_NAMES,
+    _boss_death_epitaph,
+    _boss_final_report,
+    _boss_survivor_epitaph,
+)
+from handlers.boss_state import (
+    _apply_boss_round_result,
+    _begin_boss_round,
+    _enter_boss_block_phase,
+    _record_boss_attack_choice,
+    _record_boss_block_choice,
+)
+from handlers.duel_input import extract_username as _extract_username
+from handlers.duel_state import (
+    _advance_duel_round,
+    _build_duel_result_plan,
+    _get_duel_participant_ineligibility,
+    _is_miss_roll,
+    _is_suicide_roll,
+    _resolve_zone_outcome,
+    _set_attack_choice,
+)
+from handlers.duel_messaging import (
+    AUTO_DELETE_DELAY,
+    delete_messages_job,
+    schedule_auto_delete,
+    send_and_schedule,
+)
+from handlers.hyperborean_event import (
+    ACTIVE_HYPERBOREAN_EVENTS,
+    hyperboreic_huy_callback,
+    hyperboreic_huy_daily_job,
+)
+from handlers.boss_registration import (
+    _boss_clear_registrations,
+    _boss_get_registered_chat_ids,
+    _boss_get_registered_users,
+    _boss_register_user,
+    _boss_registration_is_open,
+)
 
-AUTO_DELETE_DELAY = 60
 MOVE_TIMEOUT = 10  # 10 секунд на ход
 
 _DWARFS_FACTS_PATH = Path(__file__).resolve().parent.parent / "data" / "dwarfs_facts.json"
@@ -54,15 +115,15 @@ ACTIVE_DUELS = {}
 # 🍆 ГИПЕРБОРЕЙСКИЙ ХУЙ
 # ============================================================
 
-HYPERBOREAN_HUY_CHANCE = 0.04
+
 
 # Проверяем независимо от игровых событий раз в 15 минут.
 # Это не дневной лимит: после полуночи вероятность не обнуляется.
-HYPERBOREAN_HUY_CHECK_MINUTES = 15
+
 
 # Одно активное событие на чат.
 # Состояние живёт в памяти и не имеет ежедневного сброса.
-ACTIVE_HYPERBOREAN_EVENTS = {}
+
 
 
 # ============================================================
@@ -89,11 +150,6 @@ ACTIVE_HYPERBOREAN_EVENTS = {}
 #     "task": None,
 #     "lock": asyncio.Lock(),
 # }
-ACTIVE_BOSS_BATTLES = {}
-
-BOSS_JOIN_TIMEOUT = 60
-BOSS_MOVE_TIMEOUT = 10
-BOSS_REQUIRED_HITS = 5
 
 
 BOSSES = [
@@ -143,238 +199,8 @@ BOSSES = [
 # ============================================================
 # СЛОВАРИ ДЛЯ КНОПОК И ТЕКСТА
 # ============================================================
-
-TARGET_NAMES = {
-    "head": "Голова 🧠",
-    "body": "Торс 🛡️",
-    "dick": "Хуй 🍆",
-}
-
-
-ATTACK_PHRASES = [
-    "замахивается засапожным свинорезом",
-    "делает резкий подрез тяжелым поджильным ножом",
-    "целится заточенным шахтерским скальпелем",
-    "выполняет молниеносный выпад кованым джамбием",
-    "пытается нанести коварный тычок под ребро",
-    "выполняет убойный подрез кузнечным лезвием",
-    "крутит подлый финт короткой гномьей заточкой",
-]
-
-
-HIT_PHRASES = [
-    "с хрустом вонзает гномью сталь прямо в цель!",
-    "пробивает промасленную жилетку и наносит сокрушительный порез!",
-    "находит незащищенную складку и чисто пробивает оборону!",
-    "сбивает соперника с ног коротким боковым подрезом!",
-    "завершает пивную потасовку точнейшим тычком!",
-]
-
-
-BLOCK_PHRASES = [
-    "успевает подставить тяжелый обух и сбивает траекторию!",
-    "слышит звон стали — встречает клинок массивным набалдашником ножа!",
-    "принимает удар на толстый кожаный наруч и хохочет!",
-    "предугадывает подлость и блокирует выпад широким лезвием!",
-    "перехватывает запястье сухой мозолистой рукой!",
-]
-
-
-MISS_PHRASES = [
-    "поскальзывается на пролитом эле и режет воздух!",
-    "теряет равновесие и чиркает ножом по мифриловой жиле!",
-    "промахивается в миллиметре от цели и режет собственное голенище!",
-    "зацепляется сапогом за пень и шлепается брюхом в грязь!",
-    "выпускает нож из засаленных от рульки ладоней!",
-]
-
-
-SUICIDE_PHRASES = [
-    "пытается сделать эльфийский финт, но вонзает свинорез себе в колено!",
-    "спотыкается о собственную бороду и натыкается на свое же лезвие!",
-    "решает подбросить нож для понтов, но ловит его печенью!",
-    "выполняет опасный кувырок и случайно подрезает сам себе жилы!",
-    "переусердствовал с замахом и вырубает себя тяжелой рукоятью!",
-]
-
-
-def _plural_rounds(n: int) -> str:
-    if n % 10 == 1 and n % 100 != 11:
-        return "раунд"
-    if 2 <= n % 10 <= 4 and (n % 100 < 10 or n % 100 >= 20):
-        return "раунда"
-    return "раундов"
-
-
-def get_round_flavor_text(rounds_count: int) -> str:
-    if rounds_count <= 1:
-        phrases = [
-            "⚡ <b>Срезал в касание!</b> Противник даже не успел понять, что произошло.",
-            "🚀 <b>Ваншот!</b> Одно мгновение — и дуэль окончена.",
-            "🎯 <b>Быстрый чек!</b> Вышел, зарезал, ушел.",
-            "🐟 <b>Тюленьим жиром по лбу!</b> Противник упал, потому что был намазан, а не потому что больно.",
-            "🎺 <b>Трубач играл!</b> Играл так громко, что у врага лопнули барабанные перепонки — и душа заодно.",
-            "🍑 <b>Удар жопой!</b> Гном развернулся, подпрыгнул и приземлился задом на голову противника. Тот сдох от унижения.",
-            "🌀 <b>Смерч из бороды!</b> Завертелся, как вентилятор — врага разорвало в клочья статическим электричеством.",
-            "🧦 <b>Вонючим носком в лицо!</b> Удар был не смертелен, но запах убил мгновенно. Противник задохнулся от отвращения.",
-            "🦆 <b>Утка-крякалка!</b> Гном достал резиновую утку, крякнул — врага парализовало. Добил уткой же.",
-            "🪑 <b>Табуреткой по короне!</b> Откуда табуретка? Никто не знает. Но череп треснул.",
-            "🎣 <b>На крючок!</b> Поймал врага за бороду, дернул — и тот улетел в стратосферу. Счастливого пути!",
-            "🧠 <b>Вынул мозги через ухо!</b> Как ушную серу, только краснее и с криками.",
-            "🥚 <b>Яйцом по голове!</b> Обычным куриным. Врага стошнило, он упал и захлебнулся желтком. Позорная смерть.",
-        ]
-    elif rounds_count <= 4:
-        phrases = [
-            "⚔️ <b>Быстрая рубка!</b> Гномы едва успели запыхаться.",
-            "🔥 <b>Короткий, но яркий бой!</b> Искры летели во все стороны.",
-            "🍺 <b>Даже пиво не остыло!</b> Скоротечная схватка.",
-            "🦷 <b>Зубная фея пришла!</b> Выбил все зубы и положил под подушку. Подушки не было, так что положил в карман врагу. Тот упал от недоумения.",
-            "🧹 <b>Помелом по спине!</b> Кто принес метлу? Гном-дворник. Просто проходил мимо.",
-            "🍌 <b>Поскользнулся на шкурке!</b> Противник упал, насадился на собственный топор и сдох. Ирония? Нет, просто банан.",
-            "🔔 <b>Колокольчик!</b> Позвенел, враг застыл как вкопанный. Гном аккуратно снял с него шкуру и сделал коврик.",
-            "🦞 <b>Крабовая атака!</b> Гном достал живого краба и щипнул врага за яйца. Тот закричал на полтона выше.",
-            "🪣 <b>Ведро на голову!</b> Противник ослеп, споткнулся о собственные ноги и сломал шею. Ведро — MVP.",
-            "🧀 <b>Сыр в лицо!</b> Липкий, вонючий, с плесенью. Враг подавился от отвращения и захлебнулся слюной.",
-            "🦅 <b>Орел-мутант!</b> Гном свистнул, сверху упал орел, клюнул врага в глаз и улетел. Бой закончен.",
-            "🪤 <b>Мышеловка!</b> Поставил на пути врага. Тот наступил, оторвало ногу. Гном собрал ногу и ушел.",
-            "🎈 <b>Воздушный шарик!</b> Лопнул над ухом врага. Тот подпрыгнул, ударился головой о люстру и умер. А люстра была, блять.",
-        ]
-    elif rounds_count <= 8:
-        phrases = [
-            "🛡️ <b>Плотное рубилово!</b> Достойный поединок двух мастеров.",
-            "💥 <b>Затяжная дуэль!</b> Борода против бороды, топор против топора.",
-            "🩸 <b>Потная заруба!</b> Оба гнома оставили немало сил на арене.",
-            "🧸 <b>Плюшевым мишкой по спине!</b> Враг упал не от боли, а от шока — плюшевый мишка, серьезно?",
-            "🪥 <b>Зубной щеткой!</b> Чистил зубы, споткнулся, ткнул врага щеткой в горло. Тот задохнулся от мятной свежести.",
-            "🧻 <b>Рулон туалетной бумаги!</b> Размотал, обмотал врага, тот упал как мумия. Гном вытолкал его со сцены ногой.",
-            "🥕 <b>Морковкой в глаз!</b> Обычной морковкой. Враг моргнул — и ослеп. Морковь сломалась. Все в шоке.",
-            "🎻 <b>Скрипка!</b> Заиграл так фальшиво, что у врага лопнули уши, пошла кровь, и он скончался от мучительной боли в душе.",
-            "🪚 <b>Пила, но пилит не кость, а воздух.</b> Противник просто упал от усталости, пока гном пилил рядом. Техническая победа.",
-            "🐸 <b>Жаба!</b> Гном засунул жабу в рот врагу. Тот задохнулся, потому что жаба была жирная.",
-            "🎣 <b>Удочка!</b> Поймал врага за бороду и начал подтягивать к себе. Враг сопротивлялся, споткнулся и сломал позвоночник.",
-            "🧊 <b>Кубик льда!</b> Засунул за шиворот врагу. Тот подпрыгнул, ударился головой о свой же топор и умер. Холод убил.",
-            "📌 <b>Кнопка!</b> Уколол в пятку. Враг упал, как тронутый. Ахиллес? Нет, просто канцелярская кнопка.",
-        ]
-    else:
-        phrases = [
-            "👵 <b>Дедовская осада!</b> Бой длился так долго, что у участников выросли новые бороды.",
-            "🐌 <b>Эпическая тягомотина!</b> Зрители успели уснуть и проснуться.",
-            "🪨 <b>Встретились два камня!</b> Это была дуэль на измор.",
-            "🌌 <b>Черная дыра!</b> Гном открыл рот, засосал туда половину арены, включая врага. Потом закрыл и рыгнул.",
-            "⏳ <b>Машина времени!</b> Гном перенесся в прошлое и убил врага в детстве. На арене остался пыльный след и парадокс.",
-            "🤖 <b>Робот-гном!</b> Нажал кнопку на груди, из глаз вылетели лазеры, испепелили врага. Но гном сел на батарейках.",
-            "🍕 <b>Пицца!</b> Кинул горячей пиццей в лицо. Враг обварился и умер от ожогов. А пицца была вкусная.",
-            "🎮 <b>Контроллер!</b> Гном нажал 'Alt+F4', и враг просто исчез. Реальность вылетела.",
-            "🧙 <b>Магия, но не магия!</b> Гном просто сказал: 'Ты уже умер'. Враг спорил три часа, но потом все-таки сдох от спора.",
-            "🦄 <b>Единорог!</b> Прискакал, ткнул врага рогом в пупок и ускакал. Враг истек радужной кровью.",
-            "🪐 <b>Сатурн!</b> Гном достал кольцо Сатурна, намотал на шею врагу и затянул. Тот задохнулся в космическом пространстве. На арене.",
-            "📦 <b>Ящик с надписью 'Сюрприз'!</b> Внутри был второй ящик. Внутри второго — третий. Враг открывал три часа, устал и умер сам.",
-            "🧩 <b>Пазл!</b> Гном разобрал врага на части, как конструктор, а потом собрал заново, но неправильно. Враг ходил задом наперед, споткнулся и сломался окончательно.",
-        ]
-    return random.choice(phrases)
-
-
-# ============================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================================
-
-async def delete_messages_job(context: ContextTypes.DEFAULT_TYPE):
-    job_data = context.job.data
-    chat_id = job_data.get("chat_id")
-    message_ids = job_data.get("message_ids", [])
-
-    for msg_id in message_ids:
-        try:
-            await context.bot.delete_message(
-                chat_id=chat_id,
-                message_id=msg_id,
-            )
-        except Exception:
-            pass
-
-
-def schedule_auto_delete(
-    context: ContextTypes.DEFAULT_TYPE,
-    chat_id: int,
-    message_ids: list[int],
-):
-    if context.job_queue:
-        context.job_queue.run_once(
-            delete_messages_job,
-            when=AUTO_DELETE_DELAY,
-            data={
-                "chat_id": chat_id,
-                "message_ids": message_ids,
-            },
-        )
-
-
-def _extract_username(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> str | None:
-
-    if context.args:
-        return context.args[0].strip().lstrip("@")
-
-    if update.message and update.message.text:
-        parts = update.message.text.split()
-
-        if len(parts) > 1:
-            return parts[1].strip().lstrip("@")
-
-    return None
-
-
-async def send_and_schedule(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    text: str,
-    reply_markup: InlineKeyboardMarkup = None,
-    parse_mode: str = "HTML",
-):
-    chat_id = update.effective_chat.id
-
-    msg_id_to_delete = (
-        update.message.message_id
-        if update.message
-        else None
-    )
-
-    try:
-        if update.message:
-            bot_msg = await update.message.reply_text(
-                text,
-                parse_mode=parse_mode,
-                reply_markup=reply_markup,
-            )
-        else:
-            bot_msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode=parse_mode,
-                reply_markup=reply_markup,
-            )
-
-    except Exception:
-        bot_msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            parse_mode=parse_mode,
-            reply_markup=reply_markup,
-        )
-
-    to_delete = [bot_msg.message_id]
-
-    if msg_id_to_delete:
-        to_delete.append(msg_id_to_delete)
-
-    schedule_auto_delete(
-        context,
-        chat_id=chat_id,
-        message_ids=to_delete,
-    )
-
 
 # ============================================================
 # КЛАВИАТУРЫ
@@ -825,13 +651,11 @@ async def _process_attack_choice(
     if not duel:
         return
 
-    duel["attack_zone"] = strike_zone
 
     # Теперь ход принадлежит защищающемуся.
-    duel["phase"] = "block"
 
     # Новый turn_id = новая клавиатура.
-    duel["turn_id"] += 1
+    _set_attack_choice(duel, strike_zone)
 
     att_title = format_user_title(
         duel["attacker_data"]
@@ -913,7 +737,7 @@ async def _process_block_choice(
     # 1. Шанс 1% — самоубийство атаковавшего
     # ========================================================
 
-    if random.random() < 0.01:
+    if _is_suicide_roll(random.random()):
 
         suicide_phrase = random.choice(
             SUICIDE_PHRASES
@@ -942,7 +766,7 @@ async def _process_block_choice(
     # 2. Шанс 5% — промах
     # ========================================================
 
-    if random.random() < 0.05:
+    if _is_miss_roll(random.random()):
 
         miss_phrase = random.choice(
             MISS_PHRASES
@@ -953,23 +777,9 @@ async def _process_block_choice(
         )
 
         # Смена ролей.
-        duel["attacker_tg"], duel["defender_tg"] = (
-            duel["defender_tg"],
-            duel["attacker_tg"],
-        )
-
-        duel["attacker_data"], duel["defender_data"] = (
-            duel["defender_data"],
-            duel["attacker_data"],
-        )
-
-        duel["phase"] = "attack"
-        duel["attack_zone"] = None
-        duel["round"] += 1
+        _advance_duel_round(duel)
 
         # Новый ход = новая кнопка.
-        duel["turn_id"] += 1
-
         new_att_title = format_user_title(
             duel["attacker_data"]
         )
@@ -978,16 +788,14 @@ async def _process_block_choice(
             duel["defender_data"]
         )
 
-        text = (
-            f"💨 <b>ПРОМАХ!</b>\n"
-            f"<b>{att_title}</b> {att_action} "
-            f"в зону ({TARGET_NAMES[strike_zone]}), "
-            f"но {miss_phrase}\n\n"
-            f"🔄 <b>Смена ролей!</b>\n"
-            f"⚔️ Атакует: <b>{new_att_title}</b>\n"
-            f"🛡️ Защищается: <b>{new_def_title}</b>\n\n"
-            f"⏳ У <b>{new_att_title}</b> есть "
-            f"{MOVE_TIMEOUT} секунд на удар:"
+        text = _build_duel_miss_text(
+            att_title,
+            att_action,
+            strike_zone,
+            miss_phrase,
+            new_att_title,
+            new_def_title,
+            MOVE_TIMEOUT,
         )
 
         try:
@@ -1032,7 +840,7 @@ async def _process_block_choice(
     # 3. Сравнение УДАРА и БЛОКА
     # ========================================================
 
-    if strike_zone == block_zone:
+    if _resolve_zone_outcome(strike_zone, block_zone) == "block":
 
         block_phrase = random.choice(
             BLOCK_PHRASES
@@ -1043,23 +851,9 @@ async def _process_block_choice(
         )
 
         # Смена ролей.
-        duel["attacker_tg"], duel["defender_tg"] = (
-            duel["defender_tg"],
-            duel["attacker_tg"],
-        )
-
-        duel["attacker_data"], duel["defender_data"] = (
-            duel["defender_data"],
-            duel["attacker_data"],
-        )
-
-        duel["phase"] = "attack"
-        duel["attack_zone"] = None
-        duel["round"] += 1
+        _advance_duel_round(duel)
 
         # Новый ход = новая кнопка.
-        duel["turn_id"] += 1
-
         new_att_title = format_user_title(
             duel["attacker_data"]
         )
@@ -1068,16 +862,15 @@ async def _process_block_choice(
             duel["defender_data"]
         )
 
-        text = (
-            f"🛡️ <b>БЛОК СРАБОТАЛ!</b>\n"
-            f"<b>{att_title}</b> {att_action} "
-            f"в зону ({TARGET_NAMES[strike_zone]}), "
-            f"но <b>{def_title}</b> {block_phrase}\n\n"
-            f"🔄 <b>Инициатива переходит!</b>\n"
-            f"⚔️ Атакует: <b>{new_att_title}</b>\n"
-            f"🛡️ Защищается: <b>{new_def_title}</b>\n\n"
-            f"⏳ У <b>{new_att_title}</b> есть "
-            f"{MOVE_TIMEOUT} секунд на удар:"
+        text = _build_duel_block_text(
+            att_title,
+            def_title,
+            att_action,
+            strike_zone,
+            block_phrase,
+            new_att_title,
+            new_def_title,
+            MOVE_TIMEOUT,
         )
 
         try:
@@ -1154,395 +947,6 @@ async def _process_block_choice(
 # ЗАВЕРШЕНИЕ ДУЭЛИ
 # ============================================================
 
-async def _spawn_hyperboreic_huy(
-    context: ContextTypes.DEFAULT_TYPE,
-    chat_id: int,
-):
-    """
-    С вероятностью HYPERBOREAN_HUY_CHANCE создаёт одно из двух событий:
-
-    1. 🍆 Гиперборейский хуй
-    2. ⚔️ Хуй Короля Артура
-
-    Тип события выбирается случайно при каждом успешном появлении.
-    """
-
-    if chat_id in ACTIVE_HYPERBOREAN_EVENTS:
-        return
-
-    if random.random() >= HYPERBOREAN_HUY_CHANCE:
-        return
-
-    event_type = random.choice(
-        [
-            "hyperboreic",
-            "arthur",
-        ]
-    )
-
-    if event_type == "arthur":
-        button_text = "⚔️ ХУЙ КОРОЛЯ АРТУРА"
-        event_text = (
-            "⚔️ <b>ОБНАРУЖЕН ХУЙ КОРОЛЯ АРТУРА</b>\n\n"
-            "Кто осмелится вытащить его из камня?"
-        )
-    else:
-        button_text = "🍆 ОБНАРУЖЕН ГИПЕРБОРЕЙСКИЙ ХУЙ"
-        event_text = (
-            "⚠️ <b>ОБНАРУЖЕН ГИПЕРБОРЕЙСКИЙ ХУЙ</b>\n\n"
-            "Кто первый схватит — тому решать судьбу своего хуя."
-        )
-
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    button_text,
-                    callback_data="hyperboreic_huy",
-                )
-            ]
-        ]
-    )
-
-    try:
-        message = await context.bot.send_message(
-            chat_id=chat_id,
-            text=event_text,
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
-    except Exception:
-        logging.exception(
-            "Не удалось создать событие %s в чате %s",
-            event_type,
-            chat_id,
-        )
-        return
-
-    ACTIVE_HYPERBOREAN_EVENTS[chat_id] = {
-        "message_id": message.message_id,
-        "event_type": event_type,
-    }
-
-
-async def hyperboreic_huy_daily_job(
-    context: ContextTypes.DEFAULT_TYPE,
-):
-    """
-    Независимый генератор события.
-
-    Проверяется каждый чат, где бот уже зарегистрирован.
-    На каждой проверке вероятность появления события = 4%.
-
-    Если событие появилось, это случайно либо:
-        - Гиперборейский хуй
-        - Хуй Короля Артура
-    """
-
-    try:
-        chats = get_all_chats()
-    except Exception:
-        logging.exception(
-            "Не удалось получить список чатов для "
-            "гиперборейского хуя"
-        )
-        return
-
-    for chat_id in chats:
-        try:
-            await _spawn_hyperboreic_huy(
-                context,
-                chat_id,
-            )
-        except Exception:
-            logging.exception(
-                "Ошибка проверки гиперборейского хуя "
-                "для чата %s",
-                chat_id,
-            )
-
-
-def _claim_hyperboreic_huy(
-    chat_id: int,
-    tg_user,
-):
-    """
-    Атомарно разрешает событие в БД.
-
-    Возвращает:
-        "restored" — у гнома не было хуя, он его вернул;
-        "exploded" — хуй был, гном умер;
-        "missing" — пользователя ещё нет в БД;
-        "error" — ошибка БД.
-    """
-
-    user = get_or_create_duel_user(
-        tg_user,
-        chat_id,
-    )
-
-    user_id = int(user["user_id"])
-
-    db_path = (
-        Path(__file__).resolve().parent.parent / "bot_database.db"
-    )
-
-    try:
-        with sqlite3.connect(
-            str(db_path),
-            timeout=10,
-        ) as conn:
-            cursor = conn.execute(
-                """
-                SELECT
-                    dick_stolen_today,
-                    points
-                FROM duel_users
-                WHERE chat_id = ?
-                  AND user_id = ?
-                """,
-                (
-                    chat_id,
-                    user_id,
-                ),
-            )
-
-            row = cursor.fetchone()
-
-            if not row:
-                return "missing"
-
-            had_no_dick = bool(row[0])
-
-            if had_no_dick:
-                conn.execute(
-                    """
-                    UPDATE duel_users
-                    SET dick_stolen_today = 0
-                    WHERE chat_id = ?
-                      AND user_id = ?
-                    """,
-                    (
-                        chat_id,
-                        user_id,
-                    ),
-                )
-                return "restored"
-
-            conn.execute(
-                """
-                UPDATE duel_users
-                SET
-                    points = 0,
-                    dick_stolen_today = 1
-                WHERE chat_id = ?
-                  AND user_id = ?
-                """,
-                (
-                    chat_id,
-                    user_id,
-                ),
-            )
-            return "exploded"
-
-    except Exception:
-        logging.exception(
-            "Ошибка разрешения события гиперборейского хуя "
-            "для user_id=%s chat_id=%s",
-            user_id,
-            chat_id,
-        )
-        return "error"
-
-
-async def hyperboreic_huy_callback(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-    query = update.callback_query
-
-    if not query or query.data != "hyperboreic_huy":
-        return
-
-    chat_id = update.effective_chat.id
-    event = ACTIVE_HYPERBOREAN_EVENTS.get(chat_id)
-
-    if not event:
-        await query.answer(
-            "Хуй уже унесли.",
-            show_alert=True,
-        )
-        return
-
-    # Сразу блокируем событие в памяти.
-    # Только один игрок сможет его забрать.
-    ACTIVE_HYPERBOREAN_EVENTS.pop(chat_id, None)
-
-    event_type = event.get("event_type", "hyperboreic")
-
-    result = _claim_hyperboreic_huy(
-        chat_id,
-        query.from_user,
-    )
-
-    if result == "error":
-        ACTIVE_HYPERBOREAN_EVENTS[chat_id] = event
-
-        await query.answer(
-            "Хуй отказался определяться. Попробуй ещё раз.",
-            show_alert=True,
-        )
-        return
-
-    if result == "missing":
-        await query.answer(
-            "Гном ещё не зарегистрирован в этом чате.",
-            show_alert=True,
-        )
-        return
-
-    title = format_user_title(
-        get_or_create_duel_user(
-            query.from_user,
-            chat_id,
-        )
-    )
-
-    try:
-        await context.bot.edit_message_reply_markup(
-            chat_id=chat_id,
-            message_id=event["message_id"],
-            reply_markup=None,
-        )
-    except Exception:
-        logging.exception(
-            "Не удалось убрать кнопку события "
-            "в чате %s",
-            chat_id,
-        )
-
-    # ========================================================
-    # ХУЙ БЫЛ УКРАДЕН — ИГРОК ПЫТАЕТСЯ ВЫТАЩИТЬ ЕГО
-    # ========================================================
-
-    if result == "restored":
-
-        if event_type == "arthur":
-            await query.answer(
-                "НЕ СМОГ ВЫТАЩИТЬ ХУЙ КОРОЛЯ АРТУРА. НО ОН ВСЁ РАВНО ВЕРНУЛСЯ! 🍆",
-                show_alert=True,
-            )
-
-            try:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=(
-                        f"⚔️ <b>{title}</b> попытался вытащить "
-                        f"<b>ХУЙ КОРОЛЯ АРТУРА</b>.\n\n"
-                        "❌ Не смог вытащить хуй.\n\n"
-                        "Но легендарный хуй каким-то образом "
-                        "сам вернулся к своему владельцу.\n\n"
-                        "🍆 <b>ХУЙ ВСЁ РАВНО ВОЗВРАЩЁН.</b>"
-                    ),
-                    parse_mode="HTML",
-                )
-            except Exception:
-                logging.exception(
-                    "Не удалось отправить сообщение о возвращении "
-                    "хуя Короля Артура в чате %s",
-                    chat_id,
-                )
-
-            return
-
-        await query.answer(
-            "ХУЙ ВОЗВРАЩЁН! 🍆",
-            show_alert=True,
-        )
-
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f"🍆 <b>{title}</b> схватил гиперборейский хуй "
-                    f"и вернул себе свой собственный."
-                ),
-                parse_mode="HTML",
-            )
-        except Exception:
-            logging.exception(
-                "Не удалось отправить сообщение о возвращении "
-                "гиперборейского хуя в чате %s",
-                chat_id,
-            )
-
-        return
-
-    # ========================================================
-    # У ИГРОКА УЖЕ ЕСТЬ ХУЙ — ХУЙ РАЗРЫВАЕТ ЕГО НА МОЛЕКУЛЫ
-    # ========================================================
-
-    if event_type == "arthur":
-        await query.answer(
-            "НЕ СМОГ ВЫТАЩИТЬ ХУЙ КОРОЛЯ АРТУРА. ТЕБЯ РАЗОРВАЛО НА ВЕЛИЧЕСТВЕННЫЕ ХУЙНЫЕ МОЛЕКУЛЫ.",
-            show_alert=True,
-        )
-
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f"⚔️ <b>{title}</b> попытался вытащить "
-                    f"<b>ХУЙ КОРОЛЯ АРТУРА</b>.\n\n"
-                    "❌ Не смог вытащить хуй.\n\n"
-                    "💥 Но Хуй Короля Артура не потерпел "
-                    "такого надругательства над своим величием.\n\n"
-                    "Тело гнома разорвало на "
-                    "<b>величественные хуйные молекулы</b>.\n\n"
-                    "💀 Очки: <b>0 / 100</b>\n"
-                    "🍆 Хуй: <b>УНИЧТОЖЕН</b>"
-                ),
-                parse_mode="HTML",
-            )
-        except Exception:
-            logging.exception(
-                "Не удалось отправить сообщение о взрыве "
-                "от хуя Короля Артура в чате %s",
-                chat_id,
-            )
-
-        return
-
-    # ========================================================
-    # ОБЫЧНЫЙ ГИПЕРБОРЕЙСКИЙ ХУЙ
-    # ========================================================
-
-    await query.answer(
-        "ТЕБЯ РАЗОРВАЛО НА ХУЙНЫЕ МОЛЕКУЛЫ.",
-        show_alert=True,
-    )
-
-    try:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=(
-                f"💥 <b>{title}</b> попытался схватить "
-                f"гиперборейский хуй.\n\n"
-                "От передозировки хуев гнома разорвало "
-                "на хуйные молекулы.\n\n"
-                "💀 Очки: <b>0 / 100</b>\n"
-                "🍆 Хуй: <b>потерян</b>"
-            ),
-            parse_mode="HTML",
-        )
-    except Exception:
-        logging.exception(
-            "Не удалось отправить сообщение о взрыве "
-            "гнома в чате %s",
-            chat_id,
-        )
-
-
 async def _finish_duel(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
@@ -1563,11 +967,17 @@ async def _finish_duel(
 
     try:
 
-        w_after, l_after = execute_duel_transaction(
-            chat_id=chat_id,
-            winner_user=winner,
-            loser_user=loser,
-            is_dick_stolen=is_dick_stolen,
+        win_title = format_user_title(winner)
+        result_plan = _build_duel_result_plan(
+            winner,
+            loser,
+            is_dick_stolen,
+            win_title,
+            MAX_DAILY_POINTS,
+        )
+        w_after, l_after = apply_duel_result_plan(
+            chat_id,
+            result_plan,
         )
 
     except Exception:
@@ -1585,7 +995,6 @@ async def _finish_duel(
 
         return
 
-    win_title = format_user_title(winner)
     lose_title = format_user_title(loser)
 
     res_msg = (
@@ -1655,10 +1064,7 @@ async def _finish_duel(
             to_delete,
         )
 
-    reached_max = (
-        winner["points"] < MAX_DAILY_POINTS
-        and w_after >= MAX_DAILY_POINTS
-    )
+    reached_max = result_plan["winner_reached_max"]
 
     if reached_max and WINNER_100_PTS_GIF:
 
@@ -1732,7 +1138,11 @@ async def _process_duel_fight(
         initiator
     )
 
-    if initiator["dick_stolen_today"]:
+    initiator_ineligibility = _get_duel_participant_ineligibility(
+        initiator
+    )
+
+    if initiator_ineligibility == "no_dick":
 
         bot_msg = await context.bot.send_message(
             chat_id,
@@ -1751,7 +1161,7 @@ async def _process_duel_fight(
 
         return
 
-    if initiator["points"] <= 0:
+    if initiator_ineligibility == "no_points":
 
         bot_msg = await context.bot.send_message(
             chat_id,
@@ -1810,7 +1220,11 @@ async def _process_duel_fight(
         opponent
     )
 
-    if opponent["dick_stolen_today"]:
+    opponent_ineligibility = _get_duel_participant_ineligibility(
+        opponent
+    )
+
+    if opponent_ineligibility == "no_dick":
 
         bot_msg = await context.bot.send_message(
             chat_id,
@@ -1829,7 +1243,7 @@ async def _process_duel_fight(
 
         return
 
-    if opponent["points"] <= 0:
+    if opponent_ineligibility == "no_points":
 
         bot_msg = await context.bot.send_message(
             chat_id,
@@ -2087,7 +1501,7 @@ HUYANIE_TITLES = {
 }
 
 
-def get_huyanie_title(stolen_dicks_count: int) -> str:
+def _legacy_get_huyanie_title(stolen_dicks_count: int) -> str:
     count = int(stolen_dicks_count or 0)
 
     if count < 10:
@@ -2299,155 +1713,13 @@ async def duel_delete_command(
 
 BOSS_PHASE_TIMEOUT = 10
 BOSS_ROUND_PAUSE = 5
-BOSS_REQUIRED_HITS = 5
 
-BOSS_REG_CUTOFF_HOUR = 18
-BOSS_REG_CUTOFF_MINUTE = 0
 BOSS_JOIN_TIMEOUT = 30
 
-BOSS_ZONE_NAMES = {
-    "head": "Голова",
-    "body": "Торс",
-    "dick": "Хуй",
-}
 
 BOSS_ZONES = ("head", "body", "dick")
 
 ACTIVE_BOSS_BATTLES = {}
-
-_BOSS_REG_DB_PATH = (
-    Path(__file__).resolve().parent.parent / "bot_database.db"
-)
-
-_BOSS_REG_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS boss_registrations (
-    chat_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    username TEXT,
-    first_name TEXT NOT NULL,
-    last_name TEXT,
-    reg_date TEXT NOT NULL,
-    PRIMARY KEY (chat_id, user_id, reg_date)
-)
-"""
-
-
-def _boss_reg_timezone():
-    try:
-        return ZoneInfo(DUEL_TIMEZONE)
-    except Exception:
-        logging.exception(
-            "Не удалось загрузить DUEL_TIMEZONE=%r для регистрации босса",
-            DUEL_TIMEZONE,
-        )
-        return ZoneInfo("UTC")
-
-
-def _boss_today():
-    return datetime.now(_boss_reg_timezone()).date().isoformat()
-
-
-def _boss_registration_is_open():
-    now = datetime.now(_boss_reg_timezone())
-    cutoff = dt_time(
-        BOSS_REG_CUTOFF_HOUR,
-        BOSS_REG_CUTOFF_MINUTE,
-    )
-    return now.time() < cutoff
-
-
-def _boss_registration_connect():
-    conn = sqlite3.connect(
-        str(_BOSS_REG_DB_PATH),
-        timeout=10,
-    )
-    conn.execute(_BOSS_REG_TABLE_SQL)
-    conn.commit()
-    return conn
-
-
-def _boss_register_user(chat_id, tg_user):
-    reg_date = _boss_today()
-
-    with _boss_registration_connect() as conn:
-        cursor = conn.execute(
-            """
-            INSERT OR IGNORE INTO boss_registrations
-            (
-                chat_id,
-                user_id,
-                username,
-                first_name,
-                last_name,
-                reg_date
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                chat_id,
-                tg_user.id,
-                tg_user.username,
-                tg_user.first_name or "",
-                tg_user.last_name,
-                reg_date,
-            ),
-        )
-
-        return cursor.rowcount > 0
-
-
-def _boss_get_registered_users(chat_id):
-    reg_date = _boss_today()
-
-    with _boss_registration_connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                user_id,
-                username,
-                first_name,
-                last_name
-            FROM boss_registrations
-            WHERE chat_id = ?
-              AND reg_date = ?
-            ORDER BY rowid
-            """,
-            (chat_id, reg_date),
-        ).fetchall()
-
-    return rows
-
-
-def _boss_clear_registrations(chat_id, reg_date=None):
-    reg_date = reg_date or _boss_today()
-
-    with _boss_registration_connect() as conn:
-        conn.execute(
-            """
-            DELETE FROM boss_registrations
-            WHERE chat_id = ?
-              AND reg_date = ?
-            """,
-            (chat_id, reg_date),
-        )
-        conn.commit()
-
-
-def _boss_get_registered_chat_ids(reg_date=None):
-    reg_date = reg_date or _boss_today()
-
-    with _boss_registration_connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT DISTINCT chat_id
-            FROM boss_registrations
-            WHERE reg_date = ?
-            """,
-            (reg_date,),
-        ).fetchall()
-
-    return {row[0] for row in rows}
-
 
 # ------------------------------------------------------------
 # КЛАВИАТУРЫ
@@ -2495,31 +1767,7 @@ def _boss_block_keyboard(round_num: int):
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ------------------------------------------------------------
 
-def _boss_alive_players(battle):
-    return [
-        participant
-        for participant in battle["participants"].values()
-        if participant["alive"]
-    ]
-
-
-def _boss_player_title(participant):
-    return format_user_title(participant["data"])
-
-
-def _boss_all_alive_chosen(battle, field):
-    alive = _boss_alive_players(battle)
-
-    if not alive:
-        return False
-
-    return all(
-        participant.get(field) is not None
-        for participant in alive
-    )
-
-
-def _boss_phase_status(participant, phase):
+def _legacy_boss_phase_status(participant, phase):
     if not participant["alive"]:
         return "💀 погиб"
 
@@ -2540,63 +1788,13 @@ def _boss_phase_status(participant, phase):
     return ""
 
 
-def _boss_players_status_text(battle):
-    lines = []
-
-    for participant in battle["participants"].values():
-        title = _boss_player_title(participant)
-        status = _boss_phase_status(
-            participant,
-            battle["phase"],
-        )
-
-        lines.append(
-            f"• <b>{title}</b> — {status}"
-        )
-
-    return "\n".join(lines)
-
-
-def _boss_phase_text(battle):
-    boss = battle["boss"]
-
-    alive_count = len(_boss_alive_players(battle))
-    total_count = len(battle["participants"])
-
-    if battle["phase"] == "attack":
-        return (
-            f"💀 <b>{boss['name']} — РАУНД {battle['round']}</b>\n\n"
-            f"⚔️ <b>ФАЗА АТАКИ</b>\n"
-            f"Каждый живой игрок выбирает, куда ударить босса.\n\n"
-            f"🎯 Урон боссу: "
-            f"<b>{battle['hits']} / {BOSS_REQUIRED_HITS}</b>\n"
-            f"👥 В живых: <b>{alive_count} / {total_count}</b>\n\n"
-            f"<b>Игроки:</b>\n"
-            f"{_boss_players_status_text(battle)}\n\n"
-            f"⚔️ Выберите зону атаки:"
-        )
-
-    return (
-        f"💀 <b>{boss['name']} — РАУНД {battle['round']}</b>\n\n"
-        f"🛡 <b>ФАЗА ЗАЩИТЫ</b>\n"
-        f"Босс сейчас атакует. Каждый живой игрок "
-        f"выбирает, какую зону защищать.\n\n"
-        f"🎯 Урон боссу: "
-        f"<b>{battle['hits']} / {BOSS_REQUIRED_HITS}</b>\n"
-        f"👥 В живых: <b>{alive_count} / {total_count}</b>\n\n"
-        f"<b>Игроки:</b>\n"
-        f"{_boss_players_status_text(battle)}\n\n"
-        f"🛡 Выберите зону защиты:"
-    )
-
-
 async def _boss_render_phase(context, chat_id):
     battle = ACTIVE_BOSS_BATTLES.get(chat_id)
 
     if not battle:
         return
 
-    text = _boss_phase_text(battle)
+    text = _boss_phase_text(battle, BOSS_REQUIRED_HITS)
 
     if battle["phase"] == "attack":
         keyboard = _boss_attack_keyboard(
@@ -2713,20 +1911,19 @@ async def _boss_start_round(
         )
         return
 
-    battle["round"] += 1
-    battle["phase"] = "attack"
-
-    battle["boss_attack"] = random.choice(
+    boss_attack = random.choice(
         BOSS_ZONES
     )
 
-    battle["boss_block"] = random.choice(
+    boss_block = random.choice(
         BOSS_ZONES
     )
 
-    for participant in battle["participants"].values():
-        participant["attack"] = None
-        participant["block"] = None
+    _begin_boss_round(
+        battle,
+        boss_attack,
+        boss_block,
+    )
 
     await _boss_render_phase(
         context,
@@ -2903,26 +2100,10 @@ async def boss_callback(
                 )
                 return
 
-            user_data = get_or_create_duel_user(
+            battle["participants"][user_id] = _boss_make_participant(
                 query.from_user,
                 chat_id,
             )
-
-            battle["participants"][user_id] = {
-                "tg_user": query.from_user,
-                "data": user_data,
-                "attack": None,
-                "block": None,
-                "alive": True,
-                "hits": 0,
-                "misses": 0,
-                "blocks": 0,
-                "rounds_survived": 0,
-                "death_round": None,
-                "death_by_zone": None,
-                "death_defended_zone": None,
-                "death_attack_zone": None,
-            }
 
             await query.answer(
                 "Ты вступил в битву! ⚔️"
@@ -3014,7 +2195,11 @@ async def boss_callback(
                 )
                 return
 
-            participant["attack"] = zone
+            should_switch_to_block = _record_boss_attack_choice(
+                battle,
+                participant,
+                zone,
+            )
 
             await query.answer(
                 f"Атака: {BOSS_ZONE_NAMES[zone]} ⚔️"
@@ -3025,17 +2210,10 @@ async def boss_callback(
                 chat_id,
             )
 
-            if _boss_all_alive_chosen(
-                battle,
-                "attack",
-            ):
+            if should_switch_to_block:
                 _boss_cancel_timer(battle)
 
-                battle["phase"] = "block"
-
-                for player in battle["participants"].values():
-                    if player["alive"]:
-                        player["block"] = None
+                _enter_boss_block_phase(battle)
 
                 await _boss_render_phase(
                     context,
@@ -3113,7 +2291,11 @@ async def boss_callback(
                 )
                 return
 
-            participant["block"] = zone
+            should_resolve = _record_boss_block_choice(
+                battle,
+                participant,
+                zone,
+            )
 
             await query.answer(
                 f"Защита: {BOSS_ZONE_NAMES[zone]} 🛡"
@@ -3122,11 +2304,6 @@ async def boss_callback(
             await _boss_render_phase(
                 context,
                 chat_id,
-            )
-
-            should_resolve = _boss_all_alive_chosen(
-                battle,
-                "block",
             )
 
             if should_resolve:
@@ -3172,8 +2349,6 @@ async def _boss_resolve_round(
         boss_attack = battle["boss_attack"]
         boss_block = battle["boss_block"]
 
-        results = []
-
         for participant in battle["participants"].values():
             if not participant["alive"]:
                 continue
@@ -3191,29 +2366,26 @@ async def _boss_resolve_round(
                 block = _boss_auto_zone()
                 participant["block"] = block
 
-            hit = attack != boss_block
+        round_result = _apply_boss_round_result(
+            battle,
+            BOSS_REQUIRED_HITS,
+        )
+        results = []
 
-            if hit:
-                battle["hits"] += 1
-                participant["hits"] += 1
-                attack_result = "💥 ПОПАДАНИЕ"
-            else:
-                participant["misses"] += 1
-                attack_result = "💨 ПРОМАХ"
-
-            survived = block == boss_attack
-
-            if survived:
-                participant["blocks"] += 1
-                participant["rounds_survived"] += 1
-                block_result = "🛡 ЗАБЛОКИРОВАЛ"
-            else:
-                block_result = "💀 УБИТ"
-                participant["alive"] = False
-                participant["death_round"] = battle["round"]
-                participant["death_by_zone"] = boss_attack
-                participant["death_defended_zone"] = block
-                participant["death_attack_zone"] = attack
+        for participant_result in round_result["round_results"]:
+            participant = participant_result["participant"]
+            attack = participant_result["attack"]
+            block = participant_result["block"]
+            attack_result = (
+                "💥 ПОПАДАНИЕ"
+                if participant_result["hit"]
+                else "💨 ПРОМАХ"
+            )
+            block_result = (
+                "🛡 ЗАБЛОКИРОВАЛ"
+                if participant_result["survived"]
+                else "💀 УБИТ"
+            )
 
             title = _boss_player_title(participant)
 
@@ -3225,7 +2397,7 @@ async def _boss_resolve_round(
                 f"{block_result}"
             )
 
-        alive_after = len(_boss_alive_players(battle))
+        alive_after = round_result["alive_after"]
 
         text = (
             f"💥 <b>РАУНД {battle['round']} — РЕЗУЛЬТАТ</b>\n\n"
@@ -3242,12 +2414,7 @@ async def _boss_resolve_round(
             f"<b>{len(battle['participants'])}</b>"
         )
 
-        victory = battle["hits"] >= BOSS_REQUIRED_HITS
-        defeat = alive_after == 0
-
-        # Помечаем раунд завершённым. Это не даёт второму callback
-        # или таймеру запустить его повторно.
-        battle["phase"] = "resolving"
+        outcome = round_result["outcome"]
 
     try:
         await context.bot.edit_message_text(
@@ -3263,7 +2430,7 @@ async def _boss_resolve_round(
             chat_id,
         )
 
-    if victory:
+    if outcome == "victory":
         await asyncio.sleep(2)
         await _boss_finish_victory(
             context,
@@ -3271,7 +2438,7 @@ async def _boss_resolve_round(
         )
         return
 
-    if defeat:
+    if outcome == "defeat":
         await asyncio.sleep(2)
         await _boss_finish_defeat(
             context,
@@ -3296,92 +2463,9 @@ async def _boss_resolve_round(
 # ФИНАЛЬНАЯ СТАТИСТИКА БИТВЫ
 # ------------------------------------------------------------
 
-def _plural_rounds(value):
-    value = int(value)
-
-    if value % 10 == 1 and value % 100 != 11:
-        return "раунд"
-    if 2 <= value % 10 <= 4 and not 12 <= value % 100 <= 14:
-        return "раунда"
-    return "раундов"
 
 
-def _boss_death_epitaph(participant, boss_name):
-    title = _boss_player_title(participant)
-    attack_zone = BOSS_ZONE_NAMES.get(
-        participant.get("death_attack_zone"),
-        "неизвестную зону",
-    )
-    death_zone = BOSS_ZONE_NAMES.get(
-        participant.get("death_by_zone"),
-        "неизвестную зону",
-    )
-    defended_zone = BOSS_ZONE_NAMES.get(
-        participant.get("death_defended_zone"),
-        "неизвестную зону",
-    )
-    round_num = participant.get("death_round") or "последнем"
-
-    phrases = [
-        (
-            f"💀 <b>{title}</b> пал в раунде <b>{round_num}</b>. "
-            f"Бил в <b>{attack_zone}</b>, защищал <b>{defended_zone}</b>, "
-            f"а <b>{boss_name}</b> пришёл в <b>{death_zone}</b>. "
-            f"Гномская разведка считает это смелостью. "
-            f"Гномская бухгалтерия — ошибкой."
-        ),
-        (
-            f"☠️ <b>{title}</b> держался до раунда <b>{round_num}</b>, "
-            f"после чего <b>{boss_name}</b> объяснил разницу между "
-            f"«я защищаюсь» и «я угадал не туда». "
-            f"Удар пришёл в <b>{death_zone}</b>, "
-            f"блок стоял в <b>{defended_zone}</b>."
-        ),
-        (
-            f"🪦 Здесь мог бы стоять памятник <b>{title}</b>. "
-            f"Он бил в <b>{attack_zone}</b>, прикрывал "
-            f"<b>{defended_zone}</b> и в раунде <b>{round_num}</b> "
-            f"получил от босса в <b>{death_zone}</b>. "
-            f"Памятник решили не ставить: металл нужен для новых ножей."
-        ),
-        (
-            f"💀 <b>{title}</b> совершил тактическое отступление "
-            f"прямо в могилу. Произошло это в раунде <b>{round_num}</b>: "
-            f"атака — <b>{attack_zone}</b>, защита — <b>{defended_zone}</b>, "
-            f"босс — в <b>{death_zone}</b>. Совпадение? Нет. Судьба."
-        ),
-    ]
-
-    return random.choice(phrases)
-
-
-def _boss_survivor_epitaph(participant):
-    title = _boss_player_title(participant)
-    hits = participant.get("hits", 0)
-    misses = participant.get("misses", 0)
-    blocks = participant.get("blocks", 0)
-    survived = participant.get("rounds_survived", 0)
-
-    if hits >= 2 and blocks >= 2:
-        phrase = "рубился как настоящий гномий терминатор"
-    elif hits >= 2:
-        phrase = "превратил босса в тренировочную мишень"
-    elif blocks >= 2:
-        phrase = "оказался подозрительно хорош в умении не умереть"
-    elif hits:
-        phrase = "хотя бы успел оставить на боссе несколько зарубок"
-    else:
-        phrase = "выжил почти исключительно благодаря наглости"
-
-    return (
-        f"🛡 <b>{title}</b> — выжил. {phrase}. "
-        f"Попаданий: <b>{hits}</b>, промахов: <b>{misses}</b>, "
-        f"блоков: <b>{blocks}</b>, пережито раундов: "
-        f"<b>{survived}</b>."
-    )
-
-
-def _boss_battle_hero(participants):
+def _legacy_boss_battle_hero(participants):
     alive = [p for p in participants if p["alive"]]
 
     if not participants:
@@ -3398,107 +2482,6 @@ def _boss_battle_hero(participants):
     )
 
 
-def _boss_final_report(battle, victory: bool):
-    participants = list(battle["participants"].values())
-    boss_name = battle["boss"]["name"]
-    total = len(participants)
-    survivors = [
-        p for p in participants
-        if p["alive"]
-    ]
-    dead = [
-        p for p in participants
-        if not p["alive"]
-    ]
-    hero = _boss_battle_hero(participants)
-
-    lines = []
-
-    if victory:
-        lines.extend([
-            "🏆 <b>ЛЕГЕНДА БИТВЫ</b>",
-            "",
-            f"👹 <b>{boss_name}</b> пал после "
-            f"<b>{battle['hits']}</b> попаданий.",
-            f"⚔️ Продолжительность: <b>{battle['round']}</b> "
-            f"{_plural_rounds(battle['round'])}.",
-            f"👥 Отряд: <b>{total}</b> — выжило "
-            f"<b>{len(survivors)}</b>, погибло <b>{len(dead)}</b>.",
-            "",
-            "🛡 <b>ВЫЖИВШИЕ:</b>",
-        ])
-
-        lines.extend(
-            _boss_survivor_epitaph(p)
-            for p in survivors
-        )
-
-        if dead:
-            lines.extend([
-                "",
-                "💀 <b>ПАВШИЕ ГЕРОИ:</b>",
-            ])
-            lines.extend(
-                _boss_death_epitaph(p, boss_name)
-                for p in dead
-            )
-
-        if hero:
-            hero_title = _boss_player_title(hero)
-            lines.extend([
-                "",
-                f"👑 <b>ГЕРОЙ БИТВЫ: {hero_title}</b>",
-                f"Нанёс <b>{hero.get('hits', 0)}</b> попаданий, "
-                f"сделал <b>{hero.get('blocks', 0)}</b> блоков "
-                f"и пережил <b>{hero.get('rounds_survived', 0)}</b> "
-                f"{_plural_rounds(hero.get('rounds_survived', 0))}.",
-            ])
-
-        lines.extend([
-            "",
-            "💯 <b>Награда:</b> всем выжившим установлено 100 очков.",
-            "🍆 Украденный сегодня хуй возвращён.",
-            "",
-            "👑 <b>Великий бог хуекрадов постановил:</b> "
-            "сегодня эти гномы официально слишком охуенны, чтобы умереть.",
-        ])
-
-    else:
-        lines.extend([
-            "💀 <b>ПОСМЕРТНАЯ ЛЕТОПИСЬ ОТРЯДА</b>",
-            "",
-            f"👹 <b>{boss_name}</b> остался стоять.",
-            f"🎯 Гномы нанесли <b>{battle['hits']}</b> из "
-            f"<b>{BOSS_REQUIRED_HITS}</b> нужных попаданий.",
-            f"⚔️ Отряд продержался <b>{battle['round']}</b> "
-            f"{_plural_rounds(battle['round'])}.",
-            f"👥 Участников: <b>{total}</b>. Выжили: <b>0</b>.",
-            "",
-            "💀 <b>КАК ВСЕ УМЕРЛИ:</b>",
-        ])
-
-        lines.extend(
-            _boss_death_epitaph(p, boss_name)
-            for p in dead
-        )
-
-        if hero:
-            hero_title = _boss_player_title(hero)
-            lines.extend([
-                "",
-                f"🩸 <b>ПОСЛЕДНИЙ НАСТОЯЩИЙ ГНОМ: {hero_title}</b>",
-                f"На его счету <b>{hero.get('hits', 0)}</b> попаданий "
-                f"и <b>{hero.get('blocks', 0)}</b> блоков. "
-                "Умер, но статистику уже не отнять.",
-            ])
-
-        lines.extend([
-            "",
-            "📜 <b>Вердикт:</b> гномы были храбрыми. "
-            "Но босс был охуенно внимательным.",
-        ])
-
-    return "\n".join(lines)
 
 
 async def _boss_send_final_report(
@@ -3881,8 +2864,7 @@ async def boss_reg_command(
         await send_and_schedule(
             update,
             context,
-            "⏰ Запись на сегодняшнюю битву уже закрыта. "
-            "В 18:00 увидимся на арене.",
+            "Извинитесь. Битва уже была, запишитесь завтра до 18:00",
         )
         return
 
