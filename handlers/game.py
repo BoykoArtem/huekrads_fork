@@ -89,7 +89,7 @@ async def daily_beauty_job(context: ContextTypes.DEFAULT_TYPE):
             chats,
         )
 
-        for (chat_id,) in chats:
+        for chat_id in chats:
             try:
                 logger.info(
                     "daily_beauty_job: запускаем игру в chat_id=%s",

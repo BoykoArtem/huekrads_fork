@@ -16,12 +16,16 @@ from database import (
     mark_pizda_candidate_used,
     is_forward_reply_enabled,
 )
+from handlers.past_pizda import match_yes_no, remember_pizda_candidate
 
 _LET_DO_PHRASES_PATH = Path(__file__).resolve().parent.parent / "data" / "let_do_phrases.json"
 
 with open(_LET_DO_PHRASES_PATH, encoding="utf-8") as _phrases_file:
     LET_DO_PHRASES = tuple(json.load(_phrases_file))
 
+from handlers.past_pizda import match_yes_no
+
+logger = logging.getLogger(__name__)
 
 # Реакция на "трясущиеся" слова
 _SHAKING_PATH = Path(__file__).resolve().parent.parent / "data" / "shaking.json"
@@ -187,10 +191,22 @@ async def respond_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.date,
         )
 
-    # Ответы "Да/Нет" и троллинг Amigo
+        # Ответы "Да/Нет" и троллинг Amigo
     response_chance = 0.09
 
-    if last_responded is None or random.random() < response_chance:
+    roll = random.random()
+
+    logger.info(
+        "YES_NO: chat_id=%s user_id=%s text=%r matched=%r roll=%.4f chance=%.2f",
+        chat_id,
+        user_id,
+        text_raw,
+        yes_no,
+        roll,
+        response_chance,
+    )
+
+    if last_responded is None or roll < response_chance:
         if yes_no == "да":
             await update.message.reply_text(
                 "Пизда",

@@ -1159,25 +1159,45 @@ async def _spawn_hyperboreic_huy(
     chat_id: int,
 ):
     """
-    С вероятностью 4% создаёт событие «ОБНАРУЖЕН ГИПЕРБОРЕЙСКИЙ ХУЙ».
+    С вероятностью HYPERBOREAN_HUY_CHANCE создаёт одно из двух событий:
 
-    Функция вызывается отдельным периодическим заданием JobQueue,
-    независимо от дуэлей, боссов и любых других игровых событий.
+    1. 🍆 Гиперборейский хуй
+    2. ⚔️ Хуй Короля Артура
 
-    Шанс не является дневным счётчиком и не сбрасывается раз в сутки.
-    Само событие существует до первого успешного нажатия.
+    Тип события выбирается случайно при каждом успешном появлении.
     """
+
     if chat_id in ACTIVE_HYPERBOREAN_EVENTS:
         return
 
     if random.random() >= HYPERBOREAN_HUY_CHANCE:
         return
 
+    event_type = random.choice(
+        [
+            "hyperboreic",
+            "arthur",
+        ]
+    )
+
+    if event_type == "arthur":
+        button_text = "⚔️ ХУЙ КОРОЛЯ АРТУРА"
+        event_text = (
+            "⚔️ <b>ОБНАРУЖЕН ХУЙ КОРОЛЯ АРТУРА</b>\n\n"
+            "Кто осмелится вытащить его из камня?"
+        )
+    else:
+        button_text = "🍆 ОБНАРУЖЕН ГИПЕРБОРЕЙСКИЙ ХУЙ"
+        event_text = (
+            "⚠️ <b>ОБНАРУЖЕН ГИПЕРБОРЕЙСКИЙ ХУЙ</b>\n\n"
+            "Кто первый схватит — тому решать судьбу своего хуя."
+        )
+
     keyboard = InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
-                    "🍆 ОБНАРУЖЕН ГИПЕРБОРЕЙСКИЙ ХУЙ",
+                    button_text,
                     callback_data="hyperboreic_huy",
                 )
             ]
@@ -1187,23 +1207,21 @@ async def _spawn_hyperboreic_huy(
     try:
         message = await context.bot.send_message(
             chat_id=chat_id,
-            text=(
-                "⚠️ <b>ОБНАРУЖЕН ГИПЕРБОРЕЙСКИЙ ХУЙ</b>\n\n"
-                "Кто первый схватит — тому решать судьбу своего хуя."
-            ),
+            text=event_text,
             parse_mode="HTML",
             reply_markup=keyboard,
         )
     except Exception:
         logging.exception(
-            "Не удалось создать событие гиперборейского хуя "
-            "в чате %s",
+            "Не удалось создать событие %s в чате %s",
+            event_type,
             chat_id,
         )
         return
 
     ACTIVE_HYPERBOREAN_EVENTS[chat_id] = {
         "message_id": message.message_id,
+        "event_type": event_type,
     }
 
 
@@ -1215,8 +1233,12 @@ async def hyperboreic_huy_daily_job(
 
     Проверяется каждый чат, где бот уже зарегистрирован.
     На каждой проверке вероятность появления события = 4%.
-    Никаких ежедневных сбросов нет.
+
+    Если событие появилось, это случайно либо:
+        - Гиперборейский хуй
+        - Хуй Короля Артура
     """
+
     try:
         chats = get_all_chats()
     except Exception:
@@ -1253,6 +1275,7 @@ def _claim_hyperboreic_huy(
         "missing" — пользователя ещё нет в БД;
         "error" — ошибка БД.
     """
+
     user = get_or_create_duel_user(
         tg_user,
         chat_id,
@@ -1346,14 +1369,16 @@ async def hyperboreic_huy_callback(
 
     if not event:
         await query.answer(
-            "Гиперборейский хуй уже унесли.",
+            "Хуй уже унесли.",
             show_alert=True,
         )
         return
 
     # Сразу блокируем событие в памяти.
-    # Это гарантирует, что победитель будет только один.
+    # Только один игрок сможет его забрать.
     ACTIVE_HYPERBOREAN_EVENTS.pop(chat_id, None)
+
+    event_type = event.get("event_type", "hyperboreic")
 
     result = _claim_hyperboreic_huy(
         chat_id,
@@ -1361,11 +1386,10 @@ async def hyperboreic_huy_callback(
     )
 
     if result == "error":
-        # Возвращаем событие, если БД временно недоступна.
         ACTIVE_HYPERBOREAN_EVENTS[chat_id] = event
 
         await query.answer(
-            "Гиперборейский хуй отказался определяться. Попробуй ещё раз.",
+            "Хуй отказался определяться. Попробуй ещё раз.",
             show_alert=True,
         )
         return
@@ -1392,12 +1416,45 @@ async def hyperboreic_huy_callback(
         )
     except Exception:
         logging.exception(
-            "Не удалось убрать кнопку гиперборейского хуя "
+            "Не удалось убрать кнопку события "
             "в чате %s",
             chat_id,
         )
 
+    # ========================================================
+    # ХУЙ БЫЛ УКРАДЕН — ИГРОК ПЫТАЕТСЯ ВЫТАЩИТЬ ЕГО
+    # ========================================================
+
     if result == "restored":
+
+        if event_type == "arthur":
+            await query.answer(
+                "НЕ СМОГ ВЫТАЩИТЬ ХУЙ КОРОЛЯ АРТУРА. НО ОН ВСЁ РАВНО ВЕРНУЛСЯ! 🍆",
+                show_alert=True,
+            )
+
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"⚔️ <b>{title}</b> попытался вытащить "
+                        f"<b>ХУЙ КОРОЛЯ АРТУРА</b>.\n\n"
+                        "❌ Не смог вытащить хуй.\n\n"
+                        "Но легендарный хуй каким-то образом "
+                        "сам вернулся к своему владельцу.\n\n"
+                        "🍆 <b>ХУЙ ВСЁ РАВНО ВОЗВРАЩЁН.</b>"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                logging.exception(
+                    "Не удалось отправить сообщение о возвращении "
+                    "хуя Короля Артура в чате %s",
+                    chat_id,
+                )
+
+            return
+
         await query.answer(
             "ХУЙ ВОЗВРАЩЁН! 🍆",
             show_alert=True,
@@ -1418,7 +1475,47 @@ async def hyperboreic_huy_callback(
                 "гиперборейского хуя в чате %s",
                 chat_id,
             )
+
         return
+
+    # ========================================================
+    # У ИГРОКА УЖЕ ЕСТЬ ХУЙ — ХУЙ РАЗРЫВАЕТ ЕГО НА МОЛЕКУЛЫ
+    # ========================================================
+
+    if event_type == "arthur":
+        await query.answer(
+            "НЕ СМОГ ВЫТАЩИТЬ ХУЙ КОРОЛЯ АРТУРА. ТЕБЯ РАЗОРВАЛО НА ВЕЛИЧЕСТВЕННЫЕ ХУЙНЫЕ МОЛЕКУЛЫ.",
+            show_alert=True,
+        )
+
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"⚔️ <b>{title}</b> попытался вытащить "
+                    f"<b>ХУЙ КОРОЛЯ АРТУРА</b>.\n\n"
+                    "❌ Не смог вытащить хуй.\n\n"
+                    "💥 Но Хуй Короля Артура не потерпел "
+                    "такого надругательства над своим величием.\n\n"
+                    "Тело гнома разорвало на "
+                    "<b>величественные хуйные молекулы</b>.\n\n"
+                    "💀 Очки: <b>0 / 100</b>\n"
+                    "🍆 Хуй: <b>УНИЧТОЖЕН</b>"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception:
+            logging.exception(
+                "Не удалось отправить сообщение о взрыве "
+                "от хуя Короля Артура в чате %s",
+                chat_id,
+            )
+
+        return
+
+    # ========================================================
+    # ОБЫЧНЫЙ ГИПЕРБОРЕЙСКИЙ ХУЙ
+    # ========================================================
 
     await query.answer(
         "ТЕБЯ РАЗОРВАЛО НА ХУЙНЫЕ МОЛЕКУЛЫ.",
