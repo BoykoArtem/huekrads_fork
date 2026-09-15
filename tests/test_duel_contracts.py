@@ -1,0 +1,42 @@
+import re
+from types import SimpleNamespace
+
+
+def callback_data(markup):
+    return [button.callback_data for row in markup.inline_keyboard for button in row]
+
+
+def test_duel_keyboard_callback_data_contract():
+    from handlers import duel
+
+    assert callback_data(duel._get_strike_keyboard(7)) == [
+        "duel_strike_head_7", "duel_strike_body_7", "duel_strike_dick_7"
+    ]
+    assert callback_data(duel._get_block_keyboard(8)) == [
+        "duel_block_head_8", "duel_block_body_8", "duel_block_dick_8"
+    ]
+    for value in callback_data(duel._get_strike_keyboard(7)) + callback_data(duel._get_block_keyboard(8)):
+        assert re.fullmatch(r"duel_(strike|block)_(head|body|dick)_\d+", value)
+
+
+def test_duel_public_callback_alias_and_pure_helpers():
+    from handlers import duel
+    from handlers import duel_text
+
+    assert duel.duel_action_callback is duel.duel_strike_callback
+    assert duel.get_huyanie_title is duel_text.get_huyanie_title
+    assert duel._plural_rounds is duel_text._plural_rounds
+    for count in (0, 9, 10, 57, 100, 101):
+        assert duel.get_huyanie_title(count) == duel._legacy_get_huyanie_title(count)
+    for value in (0, 1, 2, 4, 5, 11, 12, 21, 25):
+        assert duel._plural_rounds(value) == duel._legacy_plural_rounds(value)
+    assert duel._extract_username(
+        SimpleNamespace(message=SimpleNamespace(text="/duel @Somebody")),
+        SimpleNamespace(args=[]),
+    ) == "Somebody"
+    assert duel._extract_username(
+        SimpleNamespace(message=SimpleNamespace(text="/duel")),
+        SimpleNamespace(args=[]),
+    ) is None
+    assert duel.get_huyanie_title(0)
+    assert duel.get_round_flavor_text(1)

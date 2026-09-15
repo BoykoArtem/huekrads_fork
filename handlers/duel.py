@@ -31,6 +31,14 @@ from database import (
     is_boss_enabled,
     set_boss_enabled,
 )
+from handlers.duel_text import (
+    _boss_alive_players,
+    _boss_all_alive_chosen,
+    _boss_battle_hero,
+    _boss_phase_status,
+    _plural_rounds,
+    get_huyanie_title,
+)
 
 AUTO_DELETE_DELAY = 60
 MOVE_TIMEOUT = 10  # 10 секунд на ход
@@ -198,7 +206,7 @@ SUICIDE_PHRASES = [
 ]
 
 
-def _plural_rounds(n: int) -> str:
+def _legacy_plural_rounds_early(n: int) -> str:
     if n % 10 == 1 and n % 100 != 11:
         return "раунд"
     if 2 <= n % 10 <= 4 and (n % 100 < 10 or n % 100 >= 20):
@@ -2087,7 +2095,7 @@ HUYANIE_TITLES = {
 }
 
 
-def get_huyanie_title(stolen_dicks_count: int) -> str:
+def _legacy_get_huyanie_title(stolen_dicks_count: int) -> str:
     count = int(stolen_dicks_count or 0)
 
     if count < 10:
@@ -2495,7 +2503,7 @@ def _boss_block_keyboard(round_num: int):
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ------------------------------------------------------------
 
-def _boss_alive_players(battle):
+def _legacy_boss_alive_players(battle):
     return [
         participant
         for participant in battle["participants"].values()
@@ -2507,7 +2515,7 @@ def _boss_player_title(participant):
     return format_user_title(participant["data"])
 
 
-def _boss_all_alive_chosen(battle, field):
+def _legacy_boss_all_alive_chosen(battle, field):
     alive = _boss_alive_players(battle)
 
     if not alive:
@@ -2519,7 +2527,7 @@ def _boss_all_alive_chosen(battle, field):
     )
 
 
-def _boss_phase_status(participant, phase):
+def _legacy_boss_phase_status(participant, phase):
     if not participant["alive"]:
         return "💀 погиб"
 
@@ -3296,7 +3304,7 @@ async def _boss_resolve_round(
 # ФИНАЛЬНАЯ СТАТИСТИКА БИТВЫ
 # ------------------------------------------------------------
 
-def _plural_rounds(value):
+def _legacy_plural_rounds(value):
     value = int(value)
 
     if value % 10 == 1 and value % 100 != 11:
@@ -3381,7 +3389,7 @@ def _boss_survivor_epitaph(participant):
     )
 
 
-def _boss_battle_hero(participants):
+def _legacy_boss_battle_hero(participants):
     alive = [p for p in participants if p["alive"]]
 
     if not participants:
