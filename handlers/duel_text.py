@@ -142,6 +142,51 @@ SUICIDE_PHRASES = [
 ]
 
 
+def _build_duel_miss_text(
+    attacker_title: str,
+    attack_phrase: str,
+    strike_zone: str,
+    miss_phrase: str,
+    next_attacker_title: str,
+    next_defender_title: str,
+    move_timeout: int,
+) -> str:
+    return (
+        f"💨 <b>ПРОМАХ!</b>\n"
+        f"<b>{attacker_title}</b> {attack_phrase} "
+        f"в зону ({TARGET_NAMES[strike_zone]}), "
+        f"но {miss_phrase}\n\n"
+        f"🔄 <b>Смена ролей!</b>\n"
+        f"⚔️ Атакует: <b>{next_attacker_title}</b>\n"
+        f"🛡️ Защищается: <b>{next_defender_title}</b>\n\n"
+        f"⏳ У <b>{next_attacker_title}</b> есть "
+        f"{move_timeout} секунд на удар:"
+    )
+
+
+def _build_duel_block_text(
+    attacker_title: str,
+    defender_title: str,
+    attack_phrase: str,
+    strike_zone: str,
+    block_phrase: str,
+    next_attacker_title: str,
+    next_defender_title: str,
+    move_timeout: int,
+) -> str:
+    return (
+        f"🛡️ <b>БЛОК СРАБОТАЛ!</b>\n"
+        f"<b>{attacker_title}</b> {attack_phrase} "
+        f"в зону ({TARGET_NAMES[strike_zone]}), "
+        f"но <b>{defender_title}</b> {block_phrase}\n\n"
+        f"🔄 <b>Инициатива переходит!</b>\n"
+        f"⚔️ Атакует: <b>{next_attacker_title}</b>\n"
+        f"🛡️ Защищается: <b>{next_defender_title}</b>\n\n"
+        f"⏳ У <b>{next_attacker_title}</b> есть "
+        f"{move_timeout} секунд на удар:"
+    )
+
+
 def get_round_flavor_text(rounds_count: int) -> str:
     if rounds_count <= 1:
         phrases = [

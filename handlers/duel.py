@@ -46,6 +46,8 @@ from handlers.duel_text import (
     MISS_PHRASES,
     SUICIDE_PHRASES,
     TARGET_NAMES,
+    _build_duel_block_text,
+    _build_duel_miss_text,
     get_round_flavor_text,
 )
 from handlers.duel_formatting import (
@@ -798,16 +800,14 @@ async def _process_block_choice(
             duel["defender_data"]
         )
 
-        text = (
-            f"💨 <b>ПРОМАХ!</b>\n"
-            f"<b>{att_title}</b> {att_action} "
-            f"в зону ({TARGET_NAMES[strike_zone]}), "
-            f"но {miss_phrase}\n\n"
-            f"🔄 <b>Смена ролей!</b>\n"
-            f"⚔️ Атакует: <b>{new_att_title}</b>\n"
-            f"🛡️ Защищается: <b>{new_def_title}</b>\n\n"
-            f"⏳ У <b>{new_att_title}</b> есть "
-            f"{MOVE_TIMEOUT} секунд на удар:"
+        text = _build_duel_miss_text(
+            att_title,
+            att_action,
+            strike_zone,
+            miss_phrase,
+            new_att_title,
+            new_def_title,
+            MOVE_TIMEOUT,
         )
 
         try:
@@ -874,16 +874,15 @@ async def _process_block_choice(
             duel["defender_data"]
         )
 
-        text = (
-            f"🛡️ <b>БЛОК СРАБОТАЛ!</b>\n"
-            f"<b>{att_title}</b> {att_action} "
-            f"в зону ({TARGET_NAMES[strike_zone]}), "
-            f"но <b>{def_title}</b> {block_phrase}\n\n"
-            f"🔄 <b>Инициатива переходит!</b>\n"
-            f"⚔️ Атакует: <b>{new_att_title}</b>\n"
-            f"🛡️ Защищается: <b>{new_def_title}</b>\n\n"
-            f"⏳ У <b>{new_att_title}</b> есть "
-            f"{MOVE_TIMEOUT} секунд на удар:"
+        text = _build_duel_block_text(
+            att_title,
+            def_title,
+            att_action,
+            strike_zone,
+            block_phrase,
+            new_att_title,
+            new_def_title,
+            MOVE_TIMEOUT,
         )
 
         try:
