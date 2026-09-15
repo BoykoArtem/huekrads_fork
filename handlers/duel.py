@@ -60,7 +60,7 @@ from handlers.boss_presentation import (
     _boss_final_report,
     _boss_survivor_epitaph,
 )
-from handlers.boss_state import _begin_boss_round
+from handlers.boss_state import _apply_boss_round_result, _begin_boss_round
 from handlers.duel_input import extract_username as _extract_username
 from handlers.duel_state import (
     _advance_duel_round,
@@ -2387,8 +2387,6 @@ async def _boss_resolve_round(
         boss_attack = battle["boss_attack"]
         boss_block = battle["boss_block"]
 
-        results = []
-
         for participant in battle["participants"].values():
             if not participant["alive"]:
                 continue
@@ -2406,29 +2404,26 @@ async def _boss_resolve_round(
                 block = _boss_auto_zone()
                 participant["block"] = block
 
-            hit = attack != boss_block
+        round_result = _apply_boss_round_result(
+            battle,
+            BOSS_REQUIRED_HITS,
+        )
+        results = []
 
-            if hit:
-                battle["hits"] += 1
-                participant["hits"] += 1
-                attack_result = "💥 ПОПАДАНИЕ"
-            else:
-                participant["misses"] += 1
-                attack_result = "💨 ПРОМАХ"
-
-            survived = block == boss_attack
-
-            if survived:
-                participant["blocks"] += 1
-                participant["rounds_survived"] += 1
-                block_result = "🛡 ЗАБЛОКИРОВАЛ"
-            else:
-                block_result = "💀 УБИТ"
-                participant["alive"] = False
-                participant["death_round"] = battle["round"]
-                participant["death_by_zone"] = boss_attack
-                participant["death_defended_zone"] = block
-                participant["death_attack_zone"] = attack
+        for participant_result in round_result["round_results"]:
+            participant = participant_result["participant"]
+            attack = participant_result["attack"]
+            block = participant_result["block"]
+            attack_result = (
+                "💥 ПОПАДАНИЕ"
+                if participant_result["hit"]
+                else "💨 ПРОМАХ"
+            )
+            block_result = (
+                "🛡 ЗАБЛОКИРОВАЛ"
+                if participant_result["survived"]
+                else "💀 УБИТ"
+            )
 
             title = _boss_player_title(participant)
 
@@ -2440,7 +2435,7 @@ async def _boss_resolve_round(
                 f"{block_result}"
             )
 
-        alive_after = len(_boss_alive_players(battle))
+        alive_after = round_result["alive_after"]
 
         text = (
             f"💥 <b>РАУНД {battle['round']} — РЕЗУЛЬТАТ</b>\n\n"
@@ -2457,12 +2452,7 @@ async def _boss_resolve_round(
             f"<b>{len(battle['participants'])}</b>"
         )
 
-        victory = battle["hits"] >= BOSS_REQUIRED_HITS
-        defeat = alive_after == 0
-
-        # Помечаем раунд завершённым. Это не даёт второму callback
-        # или таймеру запустить его повторно.
-        battle["phase"] = "resolving"
+        outcome = round_result["outcome"]
 
     try:
         await context.bot.edit_message_text(
@@ -2478,7 +2468,7 @@ async def _boss_resolve_round(
             chat_id,
         )
 
-    if victory:
+    if outcome == "victory":
         await asyncio.sleep(2)
         await _boss_finish_victory(
             context,
@@ -2486,7 +2476,7 @@ async def _boss_resolve_round(
         )
         return
 
-    if defeat:
+    if outcome == "defeat":
         await asyncio.sleep(2)
         await _boss_finish_defeat(
             context,
