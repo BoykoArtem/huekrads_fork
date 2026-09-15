@@ -32,10 +32,10 @@ def make_participant(
 
 
 def test_boss_death_epitaph_uses_player_result_and_one_random_choice(monkeypatch):
-    from handlers import duel
+    from handlers import boss_presentation
 
     choose = Mock(side_effect=lambda phrases: phrases[0])
-    monkeypatch.setattr(duel.random, "choice", choose)
+    monkeypatch.setattr(boss_presentation.random, "choice", choose)
     participant = make_participant(
         "@fallen",
         alive=False,
@@ -45,7 +45,10 @@ def test_boss_death_epitaph_uses_player_result_and_one_random_choice(monkeypatch
         death_by_zone="dick",
     )
 
-    result = duel._boss_death_epitaph(participant, "Тестовый Босс")
+    result = boss_presentation._boss_death_epitaph(
+        participant,
+        "Тестовый Босс",
+    )
 
     assert isinstance(result, str)
     assert result == (
@@ -75,10 +78,10 @@ def test_boss_survivor_epitaph_preserves_stat_branches(
     blocks,
     expected_phrase,
 ):
-    from handlers import duel
+    from handlers import boss_presentation
 
     choose = Mock(side_effect=AssertionError("survivor epitaph used RNG"))
-    monkeypatch.setattr(duel.random, "choice", choose)
+    monkeypatch.setattr(boss_presentation.random, "choice", choose)
     participant = make_participant(
         "@survivor",
         hits=hits,
@@ -87,7 +90,7 @@ def test_boss_survivor_epitaph_preserves_stat_branches(
         rounds_survived=4,
     )
 
-    result = duel._boss_survivor_epitaph(participant)
+    result = boss_presentation._boss_survivor_epitaph(participant)
 
     assert isinstance(result, str)
     assert result.startswith(f"🛡 <b>survivor</b> — выжил. {expected_phrase}.")
@@ -101,10 +104,10 @@ def test_boss_survivor_epitaph_preserves_stat_branches(
 def test_boss_final_report_victory_preserves_sections_and_participant_order(
     monkeypatch,
 ):
-    from handlers import duel
+    from handlers import boss_presentation
 
     choose = Mock(side_effect=lambda phrases: phrases[0])
-    monkeypatch.setattr(duel.random, "choice", choose)
+    monkeypatch.setattr(boss_presentation.random, "choice", choose)
     first_survivor = make_participant(
         "@first_survivor", hits=1, misses=1, blocks=1, rounds_survived=3
     )
@@ -130,7 +133,7 @@ def test_boss_final_report_victory_preserves_sections_and_participant_order(
         "participants": {1: first_survivor, 2: dead, 3: hero},
     }
 
-    report = duel._boss_final_report(battle, victory=True)
+    report = boss_presentation._boss_final_report(battle, victory=True)
 
     assert report.startswith("🏆 <b>ЛЕГЕНДА БИТВЫ</b>")
     assert "👹 <b>Тестовый Босс</b> пал после <b>6</b> попаданий." in report
@@ -145,10 +148,10 @@ def test_boss_final_report_victory_preserves_sections_and_participant_order(
 
 
 def test_boss_final_report_defeat_preserves_sections_and_dead_order(monkeypatch):
-    from handlers import duel
+    from handlers import boss_presentation
 
     choose = Mock(side_effect=lambda phrases: phrases[0])
-    monkeypatch.setattr(duel.random, "choice", choose)
+    monkeypatch.setattr(boss_presentation.random, "choice", choose)
     first_dead = make_participant(
         "@first_dead",
         alive=False,
@@ -178,11 +181,14 @@ def test_boss_final_report_defeat_preserves_sections_and_dead_order(monkeypatch)
         "participants": {1: first_dead, 2: last_hero},
     }
 
-    report = duel._boss_final_report(battle, victory=False)
+    report = boss_presentation._boss_final_report(battle, victory=False)
 
     assert report.startswith("💀 <b>ПОСМЕРТНАЯ ЛЕТОПИСЬ ОТРЯДА</b>")
     assert "👹 <b>Непобедимый Босс</b> остался стоять." in report
-    assert f"🎯 Гномы нанесли <b>2</b> из <b>{duel.BOSS_REQUIRED_HITS}</b>" in report
+    assert (
+        f"🎯 Гномы нанесли <b>2</b> из "
+        f"<b>{boss_presentation.BOSS_REQUIRED_HITS}</b>"
+    ) in report
     assert "👥 Участников: <b>2</b>. Выжили: <b>0</b>." in report
     assert "🩸 <b>ПОСЛЕДНИЙ НАСТОЯЩИЙ ГНОМ: last_hero</b>" in report
     assert "🛡 <b>ВЫЖИВШИЕ:</b>" not in report
@@ -190,6 +196,14 @@ def test_boss_final_report_defeat_preserves_sections_and_dead_order(monkeypatch)
     assert report.index("💀 <b>КАК ВСЕ УМЕРЛИ:</b>") < report.index("<b>first_dead</b> пал")
     assert report.index("<b>first_dead</b> пал") < report.index("<b>last_hero</b> пал")
     assert choose.call_count == 2
+
+
+def test_duel_reexports_boss_presentation_functions_by_identity():
+    from handlers import boss_presentation, duel
+
+    assert duel._boss_death_epitaph is boss_presentation._boss_death_epitaph
+    assert duel._boss_survivor_epitaph is boss_presentation._boss_survivor_epitaph
+    assert duel._boss_final_report is boss_presentation._boss_final_report
 
 
 @pytest.mark.asyncio
