@@ -2,6 +2,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 
+def test_duel_reexports_messaging_contract():
+    from handlers import duel, duel_messaging
+
+    assert duel.AUTO_DELETE_DELAY is duel_messaging.AUTO_DELETE_DELAY
+    assert duel.delete_messages_job is duel_messaging.delete_messages_job
+    assert duel.schedule_auto_delete is duel_messaging.schedule_auto_delete
+    assert duel.send_and_schedule is duel_messaging.send_and_schedule
+
+
 def test_schedule_auto_delete_uses_current_delay_and_skips_missing_queue(
     fake_context,
 ):
