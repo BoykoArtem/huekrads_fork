@@ -60,6 +60,7 @@ from handlers.boss_presentation import (
     _boss_final_report,
     _boss_survivor_epitaph,
 )
+from handlers.boss_state import _begin_boss_round
 from handlers.duel_input import extract_username as _extract_username
 from handlers.duel_state import (
     _advance_duel_round,
@@ -1928,20 +1929,19 @@ async def _boss_start_round(
         )
         return
 
-    battle["round"] += 1
-    battle["phase"] = "attack"
-
-    battle["boss_attack"] = random.choice(
+    boss_attack = random.choice(
         BOSS_ZONES
     )
 
-    battle["boss_block"] = random.choice(
+    boss_block = random.choice(
         BOSS_ZONES
     )
 
-    for participant in battle["participants"].values():
-        participant["attack"] = None
-        participant["block"] = None
+    _begin_boss_round(
+        battle,
+        boss_attack,
+        boss_block,
+    )
 
     await _boss_render_phase(
         context,
