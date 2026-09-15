@@ -2124,26 +2124,10 @@ async def boss_callback(
                 )
                 return
 
-            user_data = get_or_create_duel_user(
+            battle["participants"][user_id] = _boss_make_participant(
                 query.from_user,
                 chat_id,
             )
-
-            battle["participants"][user_id] = {
-                "tg_user": query.from_user,
-                "data": user_data,
-                "attack": None,
-                "block": None,
-                "alive": True,
-                "hits": 0,
-                "misses": 0,
-                "blocks": 0,
-                "rounds_survived": 0,
-                "death_round": None,
-                "death_by_zone": None,
-                "death_defended_zone": None,
-                "death_attack_zone": None,
-            }
 
             await query.answer(
                 "Ты вступил в битву! ⚔️"
