@@ -502,37 +502,6 @@ def apply_duel_result_plan(
         return winner["points"], loser["points"]
 
 
-def execute_duel_transaction(chat_id: int, winner_user: dict, loser_user: dict, is_dick_stolen: bool):
-    winner_points = min(100, winner_user["points"] + 10)
-    loser_points = max(0, loser_user["points"] - 5)
-    winner_name = format_user_title(winner_user)
-
-    result_plan = {
-        "is_dick_stolen": is_dick_stolen,
-        "winner": {
-            "user_id": winner_user["user_id"],
-            "points": winner_points,
-            "wins_increment": 1,
-            "daily_wins_increment": 1,
-            "stolen_dicks_count_increment": 1 if is_dick_stolen else 0,
-        },
-        "loser": {
-            "user_id": loser_user["user_id"],
-            "points": loser_points,
-            "losses_increment": 1,
-        },
-    }
-
-    if is_dick_stolen:
-        result_plan["loser"].update({
-            "dick_stolen_count_increment": 1,
-            "dick_stolen_today": 1,
-            "last_stolen_by": winner_name,
-        })
-
-    return apply_duel_result_plan(chat_id, result_plan)
-
-
 def get_duel_top(chat_id: int, sort_by: str = "wins", limit: int = 10) -> list:
     valid_cols = {"wins": "wins", "points": "points"}
     sort_column = valid_cols.get(sort_by, "wins")

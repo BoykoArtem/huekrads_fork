@@ -33,22 +33,6 @@ def test_user_is_created_for_game_and_duel(temp_database):
     assert db.get_duel_user_by_username("@alice", -100)["display_name"] == "alice"
 
 
-def test_duel_transaction_preserves_current_scoring_rules(temp_database):
-    import database as db
-
-    winner = db.get_or_create_duel_user(make_user(1, "winner"), -100)
-    loser = db.get_or_create_duel_user(make_user(2, "loser"), -100)
-    winner_points, loser_points = db.execute_duel_transaction(-100, winner, loser, True)
-    assert (winner_points, loser_points) == (30, 15)
-    refreshed_winner = db.get_duel_user_by_username("winner", -100)
-    refreshed_loser = db.get_duel_user_by_username("loser", -100)
-    assert refreshed_winner["wins"] == 1
-    assert refreshed_winner["daily_wins"] == 1
-    assert refreshed_winner["stolen_dicks_count"] == 1
-    assert refreshed_loser["losses"] == 1
-    assert refreshed_loser["dick_stolen_today"] is True
-
-
 def test_apply_duel_result_plan_uses_ready_values_and_preserves_dick_fields(
     temp_database,
 ):
