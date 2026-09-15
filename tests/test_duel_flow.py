@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -512,6 +513,257 @@ def assert_admission_did_not_start(duel, choice, start_fight):
     choice.assert_not_called()
     start_fight.assert_not_awaited()
     assert CHAT_ID not in duel.ACTIVE_DUELS
+
+
+def make_block_phase_duel(*, strike_zone="head", round_num=3, turn_id=8):
+    attacker_tg = make_user(601, "block_attacker")
+    defender_tg = make_user(602, "block_defender")
+    attacker_data = {"user_id": attacker_tg.id, "username": "Block Attacker"}
+    defender_data = {"user_id": defender_tg.id, "username": "Block Defender"}
+    return {
+        "attacker_tg": attacker_tg,
+        "defender_tg": defender_tg,
+        "attacker_data": attacker_data,
+        "defender_data": defender_data,
+        "phase": "block",
+        "attack_zone": strike_zone,
+        "round": round_num,
+        "turn_id": turn_id,
+        "message_id": 601,
+        "turn_task": None,
+        "lock": asyncio.Lock(),
+        "original_msg_id": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_process_block_choice_successful_block_preserves_rng_state_and_timer_contract(
+    monkeypatch,
+    fake_context,
+):
+    from handlers import duel
+
+    state = make_block_phase_duel()
+    duel.ACTIVE_DUELS[CHAT_ID] = state
+    original_state = state
+    attacker_tg = state["attacker_tg"]
+    defender_tg = state["defender_tg"]
+    attacker_data = state["attacker_data"]
+    defender_data = state["defender_data"]
+    tasks = install_fake_tasks(monkeypatch, duel)
+    finish_duel = AsyncMock()
+    random_rolls = iter((0.5, 0.5))
+    observed_rolls = []
+    choice_inputs = []
+    rng_events = []
+
+    def random_roll():
+        value = next(random_rolls)
+        observed_rolls.append(value)
+        rng_events.append(("random", value))
+        return value
+
+    def choose(values):
+        choice_inputs.append(values)
+        if values is duel.BLOCK_PHRASES:
+            rng_events.append(("choice", "block"))
+            return duel.BLOCK_PHRASES[0]
+        assert values is duel.ATTACK_PHRASES
+        rng_events.append(("choice", "attack"))
+        return duel.ATTACK_PHRASES[0]
+
+    monkeypatch.setattr(duel, "_finish_duel", finish_duel)
+    monkeypatch.setattr(
+        duel,
+        "random",
+        SimpleNamespace(
+            random=random_roll,
+            choice=choose,
+        ),
+    )
+
+    await duel._process_block_choice(fake_context, CHAT_ID, "head")
+
+    assert observed_rolls == [0.5, 0.5]
+    assert rng_events == [
+        ("random", 0.5),
+        ("random", 0.5),
+        ("choice", "block"),
+        ("choice", "attack"),
+    ]
+    assert choice_inputs[0] is duel.BLOCK_PHRASES
+    assert choice_inputs[1] is duel.ATTACK_PHRASES
+    assert len(choice_inputs) == 2
+    finish_duel.assert_not_awaited()
+    assert duel.ACTIVE_DUELS[CHAT_ID] is original_state
+    assert state["attacker_tg"] is defender_tg
+    assert state["defender_tg"] is attacker_tg
+    assert state["attacker_data"] is defender_data
+    assert state["defender_data"] is attacker_data
+    assert state["attack_zone"] is None
+    assert state["phase"] == "attack"
+    assert state["round"] == 4
+    assert state["turn_id"] == 9
+    assert state["turn_task"] is tasks[0]
+    fake_context.bot.edit_message_text.assert_awaited_once()
+    edit_kwargs = fake_context.bot.edit_message_text.await_args.kwargs
+    assert edit_kwargs["chat_id"] == CHAT_ID
+    assert edit_kwargs["message_id"] == 601
+    assert edit_kwargs["parse_mode"] == "HTML"
+    assert "БЛОК СРАБОТАЛ" in edit_kwargs["text"]
+    assert edit_kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "duel_strike_head_9"
+    fake_context.bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_block_choice_successful_hit_passes_current_snapshots_to_finish(
+    monkeypatch,
+    fake_context,
+):
+    from handlers import duel
+
+    state = make_block_phase_duel(strike_zone="head")
+    duel.ACTIVE_DUELS[CHAT_ID] = state
+    tasks = install_fake_tasks(monkeypatch, duel)
+    finish_duel = AsyncMock()
+    random_rolls = iter((0.5, 0.5))
+    observed_rolls = []
+    choice_inputs = []
+    rng_events = []
+
+    def random_roll():
+        value = next(random_rolls)
+        observed_rolls.append(value)
+        rng_events.append(("random", value))
+        return value
+
+    def choose(values):
+        choice_inputs.append(values)
+        if values is duel.HIT_PHRASES:
+            rng_events.append(("choice", "hit"))
+            return duel.HIT_PHRASES[0]
+        assert values is duel.ATTACK_PHRASES
+        rng_events.append(("choice", "attack"))
+        return duel.ATTACK_PHRASES[0]
+
+    monkeypatch.setattr(duel, "_finish_duel", finish_duel)
+    monkeypatch.setattr(
+        duel,
+        "random",
+        SimpleNamespace(
+            random=random_roll,
+            choice=choose,
+        ),
+    )
+
+    await duel._process_block_choice(fake_context, CHAT_ID, "body")
+
+    assert observed_rolls == [0.5, 0.5]
+    assert rng_events == [
+        ("random", 0.5),
+        ("random", 0.5),
+        ("choice", "hit"),
+        ("choice", "attack"),
+    ]
+    assert choice_inputs[0] is duel.HIT_PHRASES
+    assert choice_inputs[1] is duel.ATTACK_PHRASES
+    assert len(choice_inputs) == 2
+    finish_duel.assert_awaited_once()
+    finish_args = finish_duel.await_args
+    assert finish_args.args == (fake_context, CHAT_ID)
+    assert finish_args.kwargs["winner"] is state["attacker_data"]
+    assert finish_args.kwargs["loser"] is state["defender_data"]
+    assert finish_args.kwargs["strike_zone"] == "head"
+    assert finish_args.kwargs["block_zone"] == "body"
+    assert duel.HIT_PHRASES[0] in finish_args.kwargs["custom_text"]
+    assert duel.ATTACK_PHRASES[0] in finish_args.kwargs["custom_text"]
+    assert state["attacker_tg"].id == 601
+    assert state["defender_tg"].id == 602
+    assert state["round"] == 3
+    assert state["turn_id"] == 8
+    assert state["phase"] == "block"
+    assert state["attack_zone"] == "head"
+    assert tasks == []
+
+
+@pytest.mark.asyncio
+async def test_auto_move_timer_dispatches_matching_block_turn(
+    monkeypatch,
+    fake_context,
+):
+    from handlers import duel
+
+    state = make_block_phase_duel(round_num=7, turn_id=12)
+    duel.ACTIVE_DUELS[CHAT_ID] = state
+    sleep = AsyncMock()
+    auto_choice = Mock(return_value="dick")
+    process_block = AsyncMock()
+    monkeypatch.setattr(duel.asyncio, "sleep", sleep)
+    monkeypatch.setattr(duel.random, "choice", auto_choice)
+    monkeypatch.setattr(duel, "_process_block_choice", process_block)
+
+    await duel._auto_move_timer(fake_context, CHAT_ID, 7, "block", 12)
+
+    sleep.assert_awaited_once_with(duel.MOVE_TIMEOUT)
+    auto_choice.assert_called_once_with(["head", "body", "dick"])
+    process_block.assert_awaited_once_with(fake_context, CHAT_ID, "dick")
+    assert state["phase"] == "block"
+    assert state["round"] == 7
+    assert state["turn_id"] == 12
+    fake_context.bot.send_message.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("round_num", "phase", "turn_id"),
+    [
+        (6, "block", 12),
+        (7, "block", 11),
+        (7, "attack", 12),
+    ],
+    ids=("stale-round", "stale-turn-id", "wrong-phase"),
+)
+@pytest.mark.asyncio
+async def test_auto_move_timer_ignores_stale_block_turn(
+    monkeypatch,
+    fake_context,
+    round_num,
+    phase,
+    turn_id,
+):
+    from handlers import duel
+
+    state = make_block_phase_duel(round_num=7, turn_id=12)
+    duel.ACTIVE_DUELS[CHAT_ID] = state
+    before = {
+        key: value
+        for key, value in state.items()
+        if key != "lock"
+    }
+    sleep = AsyncMock()
+    auto_choice = Mock()
+    process_block = AsyncMock()
+    monkeypatch.setattr(duel.asyncio, "sleep", sleep)
+    monkeypatch.setattr(duel.random, "choice", auto_choice)
+    monkeypatch.setattr(duel, "_process_block_choice", process_block)
+
+    await duel._auto_move_timer(
+        fake_context,
+        CHAT_ID,
+        round_num,
+        phase,
+        turn_id,
+    )
+
+    sleep.assert_awaited_once_with(duel.MOVE_TIMEOUT)
+    auto_choice.assert_not_called()
+    process_block.assert_not_awaited()
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != "lock"
+    } == before
+    fake_context.bot.send_message.assert_not_awaited()
+    assert fake_context.job_queue.calls == []
 
 
 @pytest.mark.asyncio
