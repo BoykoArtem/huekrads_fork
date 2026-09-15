@@ -34,6 +34,23 @@ def _plural_rounds(value):
     return "\u0440\u0430\u0443\u043d\u0434\u043e\u0432"
 
 
+def _legacy_plural_rounds_early(n: int) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return "\u0440\u0430\u0443\u043d\u0434"
+    if 2 <= n % 10 <= 4 and (n % 100 < 10 or n % 100 >= 20):
+        return "\u0440\u0430\u0443\u043d\u0434\u0430"
+    return "\u0440\u0430\u0443\u043d\u0434\u043e\u0432"
+
+
+def _legacy_plural_rounds(value):
+    value = int(value)
+    if value % 10 == 1 and value % 100 != 11:
+        return "\u0440\u0430\u0443\u043d\u0434"
+    if 2 <= value % 10 <= 4 and not 12 <= value % 100 <= 14:
+        return "\u0440\u0430\u0443\u043d\u0434\u0430"
+    return "\u0440\u0430\u0443\u043d\u0434\u043e\u0432"
+
+
 def _boss_alive_players(battle):
     return [participant for participant in battle["participants"].values() if participant["alive"]]
 

@@ -27,6 +27,8 @@ def test_duel_public_callback_alias_and_pure_helpers():
     assert duel.duel_action_callback is duel.duel_strike_callback
     assert duel.get_huyanie_title is duel_text.get_huyanie_title
     assert duel._plural_rounds is duel_text._plural_rounds
+    assert duel._legacy_plural_rounds is duel_text._legacy_plural_rounds
+    assert duel._legacy_plural_rounds_early is duel_text._legacy_plural_rounds_early
     assert duel._extract_username is duel_input.extract_username
     for count in (0, 9, 10, 57, 100, 101):
         assert duel.get_huyanie_title(count) == duel._legacy_get_huyanie_title(count)

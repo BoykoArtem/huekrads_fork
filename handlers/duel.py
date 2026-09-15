@@ -36,6 +36,8 @@ from handlers.duel_text import (
     _boss_all_alive_chosen,
     _boss_battle_hero,
     _boss_phase_status,
+    _legacy_plural_rounds,
+    _legacy_plural_rounds_early,
     _plural_rounds,
     get_huyanie_title,
 )
@@ -206,14 +208,6 @@ SUICIDE_PHRASES = [
     "выполняет опасный кувырок и случайно подрезает сам себе жилы!",
     "переусердствовал с замахом и вырубает себя тяжелой рукоятью!",
 ]
-
-
-def _legacy_plural_rounds_early(n: int) -> str:
-    if n % 10 == 1 and n % 100 != 11:
-        return "раунд"
-    if 2 <= n % 10 <= 4 and (n % 100 < 10 or n % 100 >= 20):
-        return "раунда"
-    return "раундов"
 
 
 def get_round_flavor_text(rounds_count: int) -> str:
@@ -3284,16 +3278,6 @@ async def _boss_resolve_round(
 # ------------------------------------------------------------
 # ФИНАЛЬНАЯ СТАТИСТИКА БИТВЫ
 # ------------------------------------------------------------
-
-def _legacy_plural_rounds(value):
-    value = int(value)
-
-    if value % 10 == 1 and value % 100 != 11:
-        return "раунд"
-    if 2 <= value % 10 <= 4 and not 12 <= value % 100 <= 14:
-        return "раунда"
-    return "раундов"
-
 
 def _boss_death_epitaph(participant, boss_name):
     title = _boss_player_title(participant)
