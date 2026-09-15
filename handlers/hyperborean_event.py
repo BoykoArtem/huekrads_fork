@@ -402,5 +402,3 @@ async def hyperboreic_huy_callback(
             "гнома в чате %s",
             chat_id,
         )
-
-
