@@ -49,8 +49,149 @@ def test_duel_transaction_preserves_current_scoring_rules(temp_database):
     assert refreshed_loser["dick_stolen_today"] is True
 
 
+def test_apply_duel_result_plan_uses_ready_values_and_preserves_dick_fields(
+    temp_database,
+):
+    import database as db
+
+    chat_id = -102
+    winner = db.get_or_create_duel_user(make_user(21, "plan_winner"), chat_id)
+    loser = db.get_or_create_duel_user(make_user(22, "plan_loser"), chat_id)
+    with sqlite3.connect(temp_database) as connection:
+        connection.execute(
+            """
+            UPDATE duel_users
+            SET wins = 2, losses = 4, daily_wins = 3,
+                stolen_dicks_count = 5, dick_stolen_count = 6,
+                dick_stolen_today = 1, last_stolen_by = 'winner_history'
+            WHERE user_id = ? AND chat_id = ?
+            """,
+            (winner["user_id"], chat_id),
+        )
+        connection.execute(
+            """
+            UPDATE duel_users
+            SET wins = 7, losses = 5, daily_wins = 2,
+                stolen_dicks_count = 3, dick_stolen_count = 8,
+                dick_stolen_today = 1, last_stolen_by = 'loser_history'
+            WHERE user_id = ? AND chat_id = ?
+            """,
+            (loser["user_id"], chat_id),
+        )
+
+    result = db.apply_duel_result_plan(
+        chat_id,
+        {
+            "is_dick_stolen": False,
+            "winner": {
+                "user_id": winner["user_id"],
+                "points": 67,
+                "wins_increment": 3,
+                "daily_wins_increment": 4,
+                "stolen_dicks_count_increment": 9,
+            },
+            "loser": {
+                "user_id": loser["user_id"],
+                "points": 9,
+                "losses_increment": 6,
+            },
+        },
+    )
+
+    refreshed_winner = db.get_duel_user_by_username("plan_winner", chat_id)
+    refreshed_loser = db.get_duel_user_by_username("plan_loser", chat_id)
+    assert result == (67, 9)
+    assert (
+        refreshed_winner["points"],
+        refreshed_winner["wins"],
+        refreshed_winner["losses"],
+        refreshed_winner["daily_wins"],
+        refreshed_winner["stolen_dicks_count"],
+        refreshed_winner["dick_stolen_count"],
+        refreshed_winner["dick_stolen_today"],
+        refreshed_winner["last_stolen_by"],
+    ) == (67, 5, 4, 7, 5, 6, True, "winner_history")
+    assert (
+        refreshed_loser["points"],
+        refreshed_loser["wins"],
+        refreshed_loser["losses"],
+        refreshed_loser["daily_wins"],
+        refreshed_loser["stolen_dicks_count"],
+        refreshed_loser["dick_stolen_count"],
+        refreshed_loser["dick_stolen_today"],
+        refreshed_loser["last_stolen_by"],
+    ) == (9, 7, 11, 2, 3, 8, True, "loser_history")
+
+
+def test_apply_duel_result_plan_applies_steal_fields_and_increments(
+    temp_database,
+):
+    import database as db
+
+    chat_id = -103
+    winner = db.get_or_create_duel_user(make_user(31, "steal_plan_winner"), chat_id)
+    loser = db.get_or_create_duel_user(make_user(32, "steal_plan_loser"), chat_id)
+    with sqlite3.connect(temp_database) as connection:
+        connection.execute(
+            """
+            UPDATE duel_users
+            SET wins = 4, daily_wins = 5, stolen_dicks_count = 6
+            WHERE user_id = ? AND chat_id = ?
+            """,
+            (winner["user_id"], chat_id),
+        )
+        connection.execute(
+            """
+            UPDATE duel_users
+            SET losses = 7, dick_stolen_count = 8,
+                dick_stolen_today = 0, last_stolen_by = 'previous_thief'
+            WHERE user_id = ? AND chat_id = ?
+            """,
+            (loser["user_id"], chat_id),
+        )
+
+    result = db.apply_duel_result_plan(
+        chat_id,
+        {
+            "is_dick_stolen": True,
+            "winner": {
+                "user_id": winner["user_id"],
+                "points": 73,
+                "wins_increment": 2,
+                "daily_wins_increment": 3,
+                "stolen_dicks_count_increment": 4,
+            },
+            "loser": {
+                "user_id": loser["user_id"],
+                "points": 11,
+                "losses_increment": 5,
+                "dick_stolen_count_increment": 6,
+                "dick_stolen_today": 1,
+                "last_stolen_by": "prepared_winner_title",
+            },
+        },
+    )
+
+    refreshed_winner = db.get_duel_user_by_username("steal_plan_winner", chat_id)
+    refreshed_loser = db.get_duel_user_by_username("steal_plan_loser", chat_id)
+    assert result == (73, 11)
+    assert (
+        refreshed_winner["points"],
+        refreshed_winner["wins"],
+        refreshed_winner["daily_wins"],
+        refreshed_winner["stolen_dicks_count"],
+    ) == (73, 6, 8, 10)
+    assert (
+        refreshed_loser["points"],
+        refreshed_loser["losses"],
+        refreshed_loser["dick_stolen_count"],
+        refreshed_loser["dick_stolen_today"],
+        refreshed_loser["last_stolen_by"],
+    ) == (11, 12, 14, True, "prepared_winner_title")
+
+
 @pytest.mark.parametrize("failing_update", [1, 2])
-def test_duel_transaction_rolls_back_both_users_on_update_error(
+def test_apply_duel_result_plan_rolls_back_both_users_on_update_error(
     temp_database,
     monkeypatch,
     failing_update,
@@ -117,11 +258,26 @@ def test_duel_transaction_rolls_back_both_users_on_update_error(
     monkeypatch.setattr(db, "get_db", failing_get_db)
 
     with pytest.raises(sqlite3.OperationalError, match="injected UPDATE failure"):
-        db.execute_duel_transaction(
+        db.apply_duel_result_plan(
             chat_id,
-            winner_before,
-            loser_before,
-            is_dick_stolen=True,
+            {
+                "is_dick_stolen": True,
+                "winner": {
+                    "user_id": winner_before["user_id"],
+                    "points": 80,
+                    "wins_increment": 1,
+                    "daily_wins_increment": 1,
+                    "stolen_dicks_count_increment": 1,
+                },
+                "loser": {
+                    "user_id": loser_before["user_id"],
+                    "points": 30,
+                    "losses_increment": 1,
+                    "dick_stolen_count_increment": 1,
+                    "dick_stolen_today": 1,
+                    "last_stolen_by": "rollback_winner",
+                },
+            },
         )
 
     assert update_count == failing_update

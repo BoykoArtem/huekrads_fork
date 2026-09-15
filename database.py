@@ -436,42 +436,101 @@ def delete_duel_user_by_username(username: str, chat_id: int) -> bool:
         return cursor.rowcount > 0
 
 
-def execute_duel_transaction(chat_id: int, winner_user: dict, loser_user: dict, is_dick_stolen: bool):
+def apply_duel_result_plan(
+    chat_id: int,
+    result_plan: dict,
+) -> tuple[int, int]:
     with get_db() as conn:
         cursor = conn.cursor()
+        winner = result_plan["winner"]
+        loser = result_plan["loser"]
 
-        winner_points = min(100, winner_user["points"] + 10)
-        loser_points = max(0, loser_user["points"] - 5)
-        winner_name = format_user_title(winner_user)
-
-        if is_dick_stolen:
+        if result_plan["is_dick_stolen"]:
             cursor.execute("""
                 UPDATE duel_users
-                SET points = ?, wins = wins + 1, daily_wins = daily_wins + 1,
-                    stolen_dicks_count = stolen_dicks_count + 1
+                SET points = ?, wins = wins + ?, daily_wins = daily_wins + ?,
+                    stolen_dicks_count = stolen_dicks_count + ?
                 WHERE user_id = ? AND chat_id = ?
-            """, (winner_points, winner_user["user_id"], chat_id))
+            """, (
+                winner["points"],
+                winner["wins_increment"],
+                winner["daily_wins_increment"],
+                winner["stolen_dicks_count_increment"],
+                winner["user_id"],
+                chat_id,
+            ))
 
             cursor.execute("""
                 UPDATE duel_users
-                SET points = ?, losses = losses + 1, dick_stolen_count = dick_stolen_count + 1,
-                    dick_stolen_today = 1, last_stolen_by = ?
+                SET points = ?, losses = losses + ?,
+                    dick_stolen_count = dick_stolen_count + ?,
+                    dick_stolen_today = ?, last_stolen_by = ?
                 WHERE user_id = ? AND chat_id = ?
-            """, (loser_points, winner_name, loser_user["user_id"], chat_id))
+            """, (
+                loser["points"],
+                loser["losses_increment"],
+                loser["dick_stolen_count_increment"],
+                loser["dick_stolen_today"],
+                loser["last_stolen_by"],
+                loser["user_id"],
+                chat_id,
+            ))
         else:
             cursor.execute("""
                 UPDATE duel_users
-                SET points = ?, wins = wins + 1, daily_wins = daily_wins + 1
+                SET points = ?, wins = wins + ?, daily_wins = daily_wins + ?
                 WHERE user_id = ? AND chat_id = ?
-            """, (winner_points, winner_user["user_id"], chat_id))
+            """, (
+                winner["points"],
+                winner["wins_increment"],
+                winner["daily_wins_increment"],
+                winner["user_id"],
+                chat_id,
+            ))
 
             cursor.execute("""
                 UPDATE duel_users
-                SET points = ?, losses = losses + 1
+                SET points = ?, losses = losses + ?
                 WHERE user_id = ? AND chat_id = ?
-            """, (loser_points, loser_user["user_id"], chat_id))
+            """, (
+                loser["points"],
+                loser["losses_increment"],
+                loser["user_id"],
+                chat_id,
+            ))
 
-        return winner_points, loser_points
+        return winner["points"], loser["points"]
+
+
+def execute_duel_transaction(chat_id: int, winner_user: dict, loser_user: dict, is_dick_stolen: bool):
+    winner_points = min(100, winner_user["points"] + 10)
+    loser_points = max(0, loser_user["points"] - 5)
+    winner_name = format_user_title(winner_user)
+
+    result_plan = {
+        "is_dick_stolen": is_dick_stolen,
+        "winner": {
+            "user_id": winner_user["user_id"],
+            "points": winner_points,
+            "wins_increment": 1,
+            "daily_wins_increment": 1,
+            "stolen_dicks_count_increment": 1 if is_dick_stolen else 0,
+        },
+        "loser": {
+            "user_id": loser_user["user_id"],
+            "points": loser_points,
+            "losses_increment": 1,
+        },
+    }
+
+    if is_dick_stolen:
+        result_plan["loser"].update({
+            "dick_stolen_count_increment": 1,
+            "dick_stolen_today": 1,
+            "last_stolen_by": winner_name,
+        })
+
+    return apply_duel_result_plan(chat_id, result_plan)
 
 
 def get_duel_top(chat_id: int, sort_by: str = "wins", limit: int = 10) -> list:
