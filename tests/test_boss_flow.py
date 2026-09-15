@@ -120,6 +120,123 @@ def relevant_snapshot(battle):
     }
 
 
+@pytest.mark.asyncio
+async def test_boss_join_callback_inserts_current_participant_snapshot(
+    monkeypatch, fake_context
+):
+    from handlers import duel
+
+    chat_id = -714
+    tg_user = SimpleNamespace(
+        id=314,
+        username="joiner",
+        first_name="Join",
+        last_name="User",
+    )
+    update, query = make_callback_update(
+        chat_id, tg_user.id, "boss_join", alive_user=tg_user
+    )
+    battle = make_battle(
+        [],
+        phase="join",
+        round_num=0,
+        boss_attack=None,
+        boss_block=None,
+        message_id=714,
+    )
+    battle["unrelated"] = {"preserve": True}
+    battle_identity = battle
+    participants_identity = battle["participants"]
+    unrelated_before = copy.deepcopy(battle["unrelated"])
+    duel.ACTIVE_BOSS_BATTLES[chat_id] = battle
+
+    user_snapshot = {
+        "user_id": tg_user.id,
+        "username": "@stored_joiner",
+        "points": 17,
+        "custom_snapshot_value": "must stay identical",
+    }
+    db_lookup = Mock(return_value=user_snapshot)
+    monkeypatch.setattr(duel, "get_or_create_duel_user", db_lookup)
+
+    await duel.boss_callback(update, fake_context)
+
+    db_lookup.assert_called_once_with(tg_user, chat_id)
+    participant = battle["participants"][tg_user.id]
+    assert set(participant) == {
+        "tg_user",
+        "data",
+        "attack",
+        "block",
+        "alive",
+        "hits",
+        "misses",
+        "blocks",
+        "rounds_survived",
+        "death_round",
+        "death_by_zone",
+        "death_defended_zone",
+        "death_attack_zone",
+    }
+    assert participant["tg_user"] is tg_user
+    assert participant["data"] is user_snapshot
+    assert participant["attack"] is None
+    assert participant["block"] is None
+    assert participant["alive"] is True
+    assert participant["hits"] == 0
+    assert participant["misses"] == 0
+    assert participant["blocks"] == 0
+    assert participant["rounds_survived"] == 0
+    assert participant["death_round"] is None
+    assert participant["death_by_zone"] is None
+    assert participant["death_defended_zone"] is None
+    assert participant["death_attack_zone"] is None
+    assert battle is battle_identity
+    assert battle["participants"] is participants_identity
+    assert battle["phase"] == "join"
+    assert battle["unrelated"] == unrelated_before
+
+    query.answer.assert_awaited_once_with("Ты вступил в битву! ⚔️")
+    fake_context.bot.edit_message_text.assert_awaited_once()
+    edit_kwargs = fake_context.bot.edit_message_text.await_args.kwargs
+    assert edit_kwargs["chat_id"] == chat_id
+    assert edit_kwargs["message_id"] == battle["message_id"]
+    assert edit_kwargs["parse_mode"] == "HTML"
+    assert edit_kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "boss_join"
+
+
+@pytest.mark.asyncio
+async def test_boss_join_callback_rejects_duplicate_without_db_or_state_change(
+    monkeypatch, fake_context
+):
+    from handlers import duel
+
+    chat_id = -715
+    existing = make_participant(315)
+    battle = make_battle(
+        [existing],
+        phase="join",
+        round_num=0,
+        boss_attack=None,
+        boss_block=None,
+        message_id=715,
+    )
+    duel.ACTIVE_BOSS_BATTLES[chat_id] = battle
+    before = relevant_snapshot(battle)
+    participant_identity = battle["participants"][315]
+    update, query = make_callback_update(chat_id, 315, "boss_join")
+    db_lookup = Mock(side_effect=AssertionError("duplicate join must not query DB"))
+    monkeypatch.setattr(duel, "get_or_create_duel_user", db_lookup)
+
+    await duel.boss_callback(update, fake_context)
+
+    db_lookup.assert_not_called()
+    assert relevant_snapshot(battle) == before
+    assert battle["participants"][315] is participant_identity
+    query.answer.assert_awaited_once_with("Ты уже участвуешь.", show_alert=True)
+    fake_context.bot.edit_message_text.assert_not_awaited()
+
+
 @pytest.fixture(autouse=True)
 def clear_active_boss_battles():
     from handlers import duel
