@@ -19,12 +19,18 @@ def test_boss_keyboard_callback_data_contract():
 
 def test_boss_registration_uses_isolated_database(tmp_path, monkeypatch, tg_user):
     from handlers import duel
+    from handlers import boss_registration
 
-    monkeypatch.setattr(duel, "_BOSS_REG_DB_PATH", tmp_path / "registrations.db")
-    monkeypatch.setattr(duel, "_boss_today", lambda: "2025-01-01")
+    monkeypatch.setattr(boss_registration, "_BOSS_REG_DB_PATH", tmp_path / "registrations.db")
+    monkeypatch.setattr(boss_registration, "_boss_today", lambda: "2025-01-01")
+    assert duel._boss_register_user is boss_registration._boss_register_user
+    assert duel._boss_get_registered_users is boss_registration._boss_get_registered_users
+    assert duel._boss_clear_registrations is boss_registration._boss_clear_registrations
+    assert duel._boss_get_registered_chat_ids is boss_registration._boss_get_registered_chat_ids
     assert duel._boss_register_user(-99, tg_user) is True
     assert duel._boss_register_user(-99, tg_user) is False
     assert duel._boss_get_registered_users(-99) == [(1001, "tester", "Tester", "User")]
+    assert duel._boss_get_registered_chat_ids() == {-99}
     duel._boss_clear_registrations(-99)
     assert duel._boss_get_registered_users(-99) == []
 

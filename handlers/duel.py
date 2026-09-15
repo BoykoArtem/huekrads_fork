@@ -54,6 +54,16 @@ from handlers.duel_formatting import (
     boss_player_title as _boss_player_title,
 )
 from handlers.duel_input import extract_username as _extract_username
+from handlers.boss_registration import (
+    _boss_clear_registrations,
+    _boss_get_registered_chat_ids,
+    _boss_get_registered_users,
+    _boss_reg_timezone,
+    _boss_register_user,
+    _boss_registration_connect,
+    _boss_registration_is_open,
+    _boss_today,
+)
 
 AUTO_DELETE_DELAY = 60
 MOVE_TIMEOUT = 10  # 10 секунд на ход
@@ -2175,8 +2185,6 @@ BOSS_PHASE_TIMEOUT = 10
 BOSS_ROUND_PAUSE = 5
 BOSS_REQUIRED_HITS = 5
 
-BOSS_REG_CUTOFF_HOUR = 18
-BOSS_REG_CUTOFF_MINUTE = 0
 BOSS_JOIN_TIMEOUT = 30
 
 BOSS_ZONE_NAMES = {
@@ -2188,140 +2196,6 @@ BOSS_ZONE_NAMES = {
 BOSS_ZONES = ("head", "body", "dick")
 
 ACTIVE_BOSS_BATTLES = {}
-
-_BOSS_REG_DB_PATH = (
-    Path(__file__).resolve().parent.parent / "bot_database.db"
-)
-
-_BOSS_REG_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS boss_registrations (
-    chat_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    username TEXT,
-    first_name TEXT NOT NULL,
-    last_name TEXT,
-    reg_date TEXT NOT NULL,
-    PRIMARY KEY (chat_id, user_id, reg_date)
-)
-"""
-
-
-def _boss_reg_timezone():
-    try:
-        return ZoneInfo(DUEL_TIMEZONE)
-    except Exception:
-        logging.exception(
-            "Не удалось загрузить DUEL_TIMEZONE=%r для регистрации босса",
-            DUEL_TIMEZONE,
-        )
-        return ZoneInfo("UTC")
-
-
-def _boss_today():
-    return datetime.now(_boss_reg_timezone()).date().isoformat()
-
-
-def _boss_registration_is_open():
-    now = datetime.now(_boss_reg_timezone())
-    cutoff = dt_time(
-        BOSS_REG_CUTOFF_HOUR,
-        BOSS_REG_CUTOFF_MINUTE,
-    )
-    return now.time() < cutoff
-
-
-def _boss_registration_connect():
-    conn = sqlite3.connect(
-        str(_BOSS_REG_DB_PATH),
-        timeout=10,
-    )
-    conn.execute(_BOSS_REG_TABLE_SQL)
-    conn.commit()
-    return conn
-
-
-def _boss_register_user(chat_id, tg_user):
-    reg_date = _boss_today()
-
-    with _boss_registration_connect() as conn:
-        cursor = conn.execute(
-            """
-            INSERT OR IGNORE INTO boss_registrations
-            (
-                chat_id,
-                user_id,
-                username,
-                first_name,
-                last_name,
-                reg_date
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                chat_id,
-                tg_user.id,
-                tg_user.username,
-                tg_user.first_name or "",
-                tg_user.last_name,
-                reg_date,
-            ),
-        )
-
-        return cursor.rowcount > 0
-
-
-def _boss_get_registered_users(chat_id):
-    reg_date = _boss_today()
-
-    with _boss_registration_connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                user_id,
-                username,
-                first_name,
-                last_name
-            FROM boss_registrations
-            WHERE chat_id = ?
-              AND reg_date = ?
-            ORDER BY rowid
-            """,
-            (chat_id, reg_date),
-        ).fetchall()
-
-    return rows
-
-
-def _boss_clear_registrations(chat_id, reg_date=None):
-    reg_date = reg_date or _boss_today()
-
-    with _boss_registration_connect() as conn:
-        conn.execute(
-            """
-            DELETE FROM boss_registrations
-            WHERE chat_id = ?
-              AND reg_date = ?
-            """,
-            (chat_id, reg_date),
-        )
-        conn.commit()
-
-
-def _boss_get_registered_chat_ids(reg_date=None):
-    reg_date = reg_date or _boss_today()
-
-    with _boss_registration_connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT DISTINCT chat_id
-            FROM boss_registrations
-            WHERE reg_date = ?
-            """,
-            (reg_date,),
-        ).fetchall()
-
-    return {row[0] for row in rows}
-
 
 # ------------------------------------------------------------
 # КЛАВИАТУРЫ
