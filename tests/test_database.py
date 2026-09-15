@@ -1,4 +1,8 @@
+import sqlite3
+from contextlib import contextmanager
 from types import SimpleNamespace
+
+import pytest
 
 
 def make_user(user_id=1, username="alice", first_name="Alice"):
@@ -43,6 +47,87 @@ def test_duel_transaction_preserves_current_scoring_rules(temp_database):
     assert refreshed_winner["stolen_dicks_count"] == 1
     assert refreshed_loser["losses"] == 1
     assert refreshed_loser["dick_stolen_today"] is True
+
+
+@pytest.mark.parametrize("failing_update", [1, 2])
+def test_duel_transaction_rolls_back_both_users_on_update_error(
+    temp_database,
+    monkeypatch,
+    failing_update,
+):
+    import database as db
+
+    chat_id = -101
+    winner = db.get_or_create_duel_user(make_user(11, "rollback_winner"), chat_id)
+    loser = db.get_or_create_duel_user(make_user(12, "rollback_loser"), chat_id)
+    with sqlite3.connect(temp_database) as connection:
+        connection.execute(
+            """
+            UPDATE duel_users
+            SET points = 70, wins = 8, losses = 2, daily_wins = 4,
+                stolen_dicks_count = 3, dick_stolen_count = 1,
+                dick_stolen_today = 1, last_stolen_by = 'winner_history'
+            WHERE user_id = ? AND chat_id = ?
+            """,
+            (winner["user_id"], chat_id),
+        )
+        connection.execute(
+            """
+            UPDATE duel_users
+            SET points = 35, wins = 5, losses = 6, daily_wins = 2,
+                stolen_dicks_count = 2, dick_stolen_count = 7,
+                dick_stolen_today = 1, last_stolen_by = 'loser_history'
+            WHERE user_id = ? AND chat_id = ?
+            """,
+            (loser["user_id"], chat_id),
+        )
+
+    winner_before = db.get_duel_user_by_username("rollback_winner", chat_id)
+    loser_before = db.get_duel_user_by_username("rollback_loser", chat_id)
+    real_get_db = db.get_db
+    update_count = 0
+
+    class FailingCursor:
+        def __init__(self, cursor):
+            self._cursor = cursor
+
+        def execute(self, statement, parameters=()):
+            nonlocal update_count
+            if statement.lstrip().upper().startswith("UPDATE"):
+                update_count += 1
+                if update_count == failing_update:
+                    raise sqlite3.OperationalError("injected UPDATE failure")
+            return self._cursor.execute(statement, parameters)
+
+        def __getattr__(self, name):
+            return getattr(self._cursor, name)
+
+    class ConnectionProxy:
+        def __init__(self, connection):
+            self._connection = connection
+
+        def cursor(self):
+            return FailingCursor(self._connection.cursor())
+
+    @contextmanager
+    def failing_get_db():
+        with real_get_db() as connection:
+            yield ConnectionProxy(connection)
+
+    monkeypatch.setattr(db, "get_db", failing_get_db)
+
+    with pytest.raises(sqlite3.OperationalError, match="injected UPDATE failure"):
+        db.execute_duel_transaction(
+            chat_id,
+            winner_before,
+            loser_before,
+            is_dick_stolen=True,
+        )
+
+    assert update_count == failing_update
+    monkeypatch.setattr(db, "get_db", real_get_db)
+    assert db.get_duel_user_by_username("rollback_winner", chat_id) == winner_before
+    assert db.get_duel_user_by_username("rollback_loser", chat_id) == loser_before
 
 
 def test_game_birthdays_candidates_meta_and_boss_reward(temp_database, monkeypatch):
