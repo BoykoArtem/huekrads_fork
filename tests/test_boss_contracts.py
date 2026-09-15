@@ -31,6 +31,7 @@ def test_boss_registration_uses_isolated_database(tmp_path, monkeypatch, tg_user
 
 def test_boss_state_helpers():
     from handlers import duel
+    from handlers import duel_formatting
     from handlers import duel_text
 
     battle = {"participants": {1: {"alive": True}, 2: {"alive": False}}}
@@ -38,6 +39,7 @@ def test_boss_state_helpers():
     assert duel._boss_all_alive_chosen is duel_text._boss_all_alive_chosen
     assert duel._boss_phase_status is duel_text._boss_phase_status
     assert duel._boss_battle_hero is duel_text._boss_battle_hero
+    assert duel._boss_player_title is duel_formatting.boss_player_title
     assert duel._boss_alive_players(battle) == [{"alive": True}]
     assert duel._boss_all_alive_chosen({"participants": {1: {"alive": True, "attack": "head"}}}, "attack")
     participant = {"alive": True, "attack": "head", "block": None}
@@ -47,3 +49,4 @@ def test_boss_state_helpers():
         {"alive": True, "hits": 2, "blocks": 0, "rounds_survived": 1},
     ]
     assert duel._boss_battle_hero(players) == duel._legacy_boss_battle_hero(players)
+    assert duel._boss_player_title({"data": {"username": "@boss_tester"}}) == "boss_tester"

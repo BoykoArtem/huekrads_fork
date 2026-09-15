@@ -39,6 +39,7 @@ from handlers.duel_text import (
     _plural_rounds,
     get_huyanie_title,
 )
+from handlers.duel_formatting import boss_player_title as _boss_player_title
 from handlers.duel_input import extract_username as _extract_username
 
 AUTO_DELETE_DELAY = 60
@@ -2493,10 +2494,6 @@ def _legacy_boss_alive_players(battle):
         for participant in battle["participants"].values()
         if participant["alive"]
     ]
-
-
-def _boss_player_title(participant):
-    return format_user_title(participant["data"])
 
 
 def _legacy_boss_all_alive_chosen(battle, field):
