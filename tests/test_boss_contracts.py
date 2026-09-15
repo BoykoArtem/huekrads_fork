@@ -17,6 +17,19 @@ def test_boss_keyboard_callback_data_contract():
         assert re.fullmatch(r"boss_(attack|block)_(head|body|dick)_\d+", value)
 
 
+def test_boss_runtime_constants_and_state_contract():
+    from handlers import duel
+
+    assert duel.BOSS_JOIN_TIMEOUT == 30
+    assert duel.BOSS_REQUIRED_HITS == 5
+    state = duel.ACTIVE_BOSS_BATTLES
+    state.clear()
+    state[-99] = {"phase": "join"}
+    assert duel.ACTIVE_BOSS_BATTLES is state
+    assert duel.ACTIVE_BOSS_BATTLES[-99] == {"phase": "join"}
+    state.clear()
+
+
 def test_boss_registration_uses_isolated_database(tmp_path, monkeypatch, tg_user):
     from handlers import duel
     from handlers import boss_registration

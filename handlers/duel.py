@@ -131,11 +131,7 @@ ACTIVE_DUELS = {}
 #     "task": None,
 #     "lock": asyncio.Lock(),
 # }
-ACTIVE_BOSS_BATTLES = {}
-
-BOSS_JOIN_TIMEOUT = 60
 BOSS_MOVE_TIMEOUT = 10
-BOSS_REQUIRED_HITS = 5
 
 
 BOSSES = [
