@@ -1,4 +1,25 @@
-from handlers.duel_state import _advance_duel_round, _set_attack_choice
+from handlers.duel_state import (
+    _advance_duel_round,
+    _is_miss_roll,
+    _is_suicide_roll,
+    _resolve_zone_outcome,
+    _set_attack_choice,
+)
+
+
+def test_suicide_roll_boundary():
+    assert _is_suicide_roll(0.009999) is True
+    assert _is_suicide_roll(0.01) is False
+
+
+def test_miss_roll_boundary():
+    assert _is_miss_roll(0.049999) is True
+    assert _is_miss_roll(0.05) is False
+
+
+def test_zone_outcome_distinguishes_block_and_hit():
+    assert _resolve_zone_outcome("head", "head") == "block"
+    assert _resolve_zone_outcome("head", "body") == "hit"
 
 
 def test_set_attack_choice_mutates_state_in_place():

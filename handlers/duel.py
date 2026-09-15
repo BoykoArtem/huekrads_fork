@@ -54,7 +54,13 @@ from handlers.duel_formatting import (
     boss_player_title as _boss_player_title,
 )
 from handlers.duel_input import extract_username as _extract_username
-from handlers.duel_state import _advance_duel_round, _set_attack_choice
+from handlers.duel_state import (
+    _advance_duel_round,
+    _is_miss_roll,
+    _is_suicide_roll,
+    _resolve_zone_outcome,
+    _set_attack_choice,
+)
 from handlers.hyperborean_event import (
     ACTIVE_HYPERBOREAN_EVENTS,
     HYPERBOREAN_HUY_CHANCE,
@@ -801,7 +807,7 @@ async def _process_block_choice(
     # 1. Шанс 1% — самоубийство атаковавшего
     # ========================================================
 
-    if random.random() < 0.01:
+    if _is_suicide_roll(random.random()):
 
         suicide_phrase = random.choice(
             SUICIDE_PHRASES
@@ -830,7 +836,7 @@ async def _process_block_choice(
     # 2. Шанс 5% — промах
     # ========================================================
 
-    if random.random() < 0.05:
+    if _is_miss_roll(random.random()):
 
         miss_phrase = random.choice(
             MISS_PHRASES
@@ -906,7 +912,7 @@ async def _process_block_choice(
     # 3. Сравнение УДАРА и БЛОКА
     # ========================================================
 
-    if strike_zone == block_zone:
+    if _resolve_zone_outcome(strike_zone, block_zone) == "block":
 
         block_phrase = random.choice(
             BLOCK_PHRASES
