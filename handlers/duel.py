@@ -60,7 +60,13 @@ from handlers.boss_presentation import (
     _boss_final_report,
     _boss_survivor_epitaph,
 )
-from handlers.boss_state import _apply_boss_round_result, _begin_boss_round
+from handlers.boss_state import (
+    _apply_boss_round_result,
+    _begin_boss_round,
+    _enter_boss_block_phase,
+    _record_boss_attack_choice,
+    _record_boss_block_choice,
+)
 from handlers.duel_input import extract_username as _extract_username
 from handlers.duel_state import (
     _advance_duel_round,
@@ -2229,7 +2235,11 @@ async def boss_callback(
                 )
                 return
 
-            participant["attack"] = zone
+            should_switch_to_block = _record_boss_attack_choice(
+                battle,
+                participant,
+                zone,
+            )
 
             await query.answer(
                 f"Атака: {BOSS_ZONE_NAMES[zone]} ⚔️"
@@ -2240,17 +2250,10 @@ async def boss_callback(
                 chat_id,
             )
 
-            if _boss_all_alive_chosen(
-                battle,
-                "attack",
-            ):
+            if should_switch_to_block:
                 _boss_cancel_timer(battle)
 
-                battle["phase"] = "block"
-
-                for player in battle["participants"].values():
-                    if player["alive"]:
-                        player["block"] = None
+                _enter_boss_block_phase(battle)
 
                 await _boss_render_phase(
                     context,
@@ -2328,7 +2331,11 @@ async def boss_callback(
                 )
                 return
 
-            participant["block"] = zone
+            should_resolve = _record_boss_block_choice(
+                battle,
+                participant,
+                zone,
+            )
 
             await query.answer(
                 f"Защита: {BOSS_ZONE_NAMES[zone]} 🛡"
@@ -2337,11 +2344,6 @@ async def boss_callback(
             await _boss_render_phase(
                 context,
                 chat_id,
-            )
-
-            should_resolve = _boss_all_alive_chosen(
-                battle,
-                "block",
             )
 
             if should_resolve:

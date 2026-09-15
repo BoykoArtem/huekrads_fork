@@ -12,6 +12,42 @@ def _begin_boss_round(battle, boss_attack, boss_block):
         participant["block"] = None
 
 
+def _record_boss_attack_choice(battle, participant, zone):
+    participant["attack"] = zone
+
+    alive = [
+        player
+        for player in battle["participants"].values()
+        if player["alive"]
+    ]
+    return bool(alive) and all(
+        player.get("attack") is not None
+        for player in alive
+    )
+
+
+def _enter_boss_block_phase(battle):
+    battle["phase"] = "block"
+
+    for participant in battle["participants"].values():
+        if participant["alive"]:
+            participant["block"] = None
+
+
+def _record_boss_block_choice(battle, participant, zone):
+    participant["block"] = zone
+
+    alive = [
+        player
+        for player in battle["participants"].values()
+        if player["alive"]
+    ]
+    return bool(alive) and all(
+        player.get("block") is not None
+        for player in alive
+    )
+
+
 def _apply_boss_round_result(battle, required_hits):
     boss_attack = battle["boss_attack"]
     boss_block = battle["boss_block"]

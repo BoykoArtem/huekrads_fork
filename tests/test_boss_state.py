@@ -139,6 +139,193 @@ def test_begin_boss_round_mutates_in_place_and_preserves_unrelated_state():
     } == second_unrelated
 
 
+def test_record_boss_attack_choice_incomplete_mutates_in_place():
+    from handlers.boss_state import _record_boss_attack_choice
+
+    first = {"alive": True, "attack": None, "block": "head", "score": 3}
+    second = {"alive": True, "attack": None, "block": "body", "score": 4}
+    participants = {1: first, 2: second}
+    battle = {
+        "phase": "attack",
+        "participants": participants,
+        "round": 6,
+    }
+
+    completed = _record_boss_attack_choice(battle, first, "dick")
+
+    assert completed is False
+    assert battle["phase"] == "attack"
+    assert first == {
+        "alive": True,
+        "attack": "dick",
+        "block": "head",
+        "score": 3,
+    }
+    assert second == {
+        "alive": True,
+        "attack": None,
+        "block": "body",
+        "score": 4,
+    }
+    assert battle["participants"] is participants
+    assert battle["participants"][1] is first
+    assert battle["participants"][2] is second
+    assert battle["round"] == 6
+
+
+def test_record_boss_attack_choice_overwrites_existing_choice():
+    from handlers.boss_state import _record_boss_attack_choice
+
+    participant = {
+        "alive": True,
+        "attack": "head",
+        "block": "body",
+        "custom": "unchanged",
+    }
+    battle = {
+        "phase": "attack",
+        "participants": {
+            1: participant,
+            2: {"alive": True, "attack": None, "block": None},
+        },
+    }
+
+    completed = _record_boss_attack_choice(battle, participant, "dick")
+
+    assert completed is False
+    assert participant == {
+        "alive": True,
+        "attack": "dick",
+        "block": "body",
+        "custom": "unchanged",
+    }
+
+
+def test_record_boss_attack_completion_and_enter_block_phase():
+    from handlers.boss_state import (
+        _enter_boss_block_phase,
+        _record_boss_attack_choice,
+    )
+
+    first = {"alive": True, "attack": "head", "block": "head"}
+    last = {"alive": True, "attack": None, "block": "body"}
+    battle = {
+        "phase": "attack",
+        "participants": {1: first, 2: last},
+    }
+
+    completed = _record_boss_attack_choice(battle, last, "body")
+
+    assert completed is True
+    assert battle["phase"] == "attack"
+    assert first["block"] == "head"
+    assert last["block"] == "body"
+
+    _enter_boss_block_phase(battle)
+
+    assert battle["phase"] == "block"
+    assert first["block"] is None
+    assert last["block"] is None
+
+
+def test_enter_boss_block_phase_does_not_reset_dead_participant():
+    from handlers.boss_state import _enter_boss_block_phase
+
+    alive = {"alive": True, "attack": "head", "block": "body"}
+    dead = {"alive": False, "attack": "dick", "block": "dick"}
+    battle = {
+        "phase": "attack",
+        "participants": {1: alive, 2: dead},
+        "custom": {"unchanged": True},
+    }
+
+    result = _enter_boss_block_phase(battle)
+
+    assert result is None
+    assert battle["phase"] == "block"
+    assert alive["block"] is None
+    assert dead["block"] == "dick"
+    assert dead["attack"] == "dick"
+    assert battle["custom"] == {"unchanged": True}
+
+
+def test_record_boss_block_choice_incomplete_keeps_phase():
+    from handlers.boss_state import _record_boss_block_choice
+
+    first = {"alive": True, "attack": "head", "block": None, "score": 3}
+    second = {"alive": True, "attack": "body", "block": None, "score": 4}
+    participants = {1: first, 2: second}
+    battle = {
+        "phase": "block",
+        "participants": participants,
+        "round": 8,
+    }
+
+    completed = _record_boss_block_choice(battle, first, "head")
+
+    assert completed is False
+    assert battle["phase"] == "block"
+    assert first == {
+        "alive": True,
+        "attack": "head",
+        "block": "head",
+        "score": 3,
+    }
+    assert second["block"] is None
+    assert battle["participants"] is participants
+    assert battle["participants"][1] is first
+    assert battle["participants"][2] is second
+    assert battle["round"] == 8
+
+
+def test_record_boss_block_choice_overwrites_existing_choice():
+    from handlers.boss_state import _record_boss_block_choice
+
+    participant = {
+        "alive": True,
+        "attack": "head",
+        "block": "head",
+        "custom": "unchanged",
+    }
+    battle = {
+        "phase": "block",
+        "participants": {
+            1: participant,
+            2: {"alive": True, "attack": "body", "block": None},
+        },
+    }
+
+    completed = _record_boss_block_choice(battle, participant, "dick")
+
+    assert completed is False
+    assert battle["phase"] == "block"
+    assert participant == {
+        "alive": True,
+        "attack": "head",
+        "block": "dick",
+        "custom": "unchanged",
+    }
+
+
+def test_record_boss_block_choice_reports_completion_without_phase_change():
+    from handlers.boss_state import _record_boss_block_choice
+
+    first = {"alive": True, "attack": "head", "block": "head"}
+    last = {"alive": True, "attack": "body", "block": None}
+    dead = {"alive": False, "attack": "dick", "block": None}
+    battle = {
+        "phase": "block",
+        "participants": {1: first, 2: last, 3: dead},
+    }
+
+    completed = _record_boss_block_choice(battle, last, "body")
+
+    assert completed is True
+    assert last["block"] == "body"
+    assert dead["block"] is None
+    assert battle["phase"] == "block"
+
+
 def test_apply_boss_round_result_handles_mixed_round():
     from handlers.boss_state import _apply_boss_round_result
 
