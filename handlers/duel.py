@@ -71,6 +71,7 @@ from handlers.duel_input import extract_username as _extract_username
 from handlers.duel_state import (
     _advance_duel_round,
     _build_duel_result_plan,
+    _get_duel_participant_ineligibility,
     _is_miss_roll,
     _is_suicide_roll,
     _resolve_zone_outcome,
@@ -1150,7 +1151,11 @@ async def _process_duel_fight(
         initiator
     )
 
-    if initiator["dick_stolen_today"]:
+    initiator_ineligibility = _get_duel_participant_ineligibility(
+        initiator
+    )
+
+    if initiator_ineligibility == "no_dick":
 
         bot_msg = await context.bot.send_message(
             chat_id,
@@ -1169,7 +1174,7 @@ async def _process_duel_fight(
 
         return
 
-    if initiator["points"] <= 0:
+    if initiator_ineligibility == "no_points":
 
         bot_msg = await context.bot.send_message(
             chat_id,
@@ -1228,7 +1233,11 @@ async def _process_duel_fight(
         opponent
     )
 
-    if opponent["dick_stolen_today"]:
+    opponent_ineligibility = _get_duel_participant_ineligibility(
+        opponent
+    )
+
+    if opponent_ineligibility == "no_dick":
 
         bot_msg = await context.bot.send_message(
             chat_id,
@@ -1247,7 +1256,7 @@ async def _process_duel_fight(
 
         return
 
-    if opponent["points"] <= 0:
+    if opponent_ineligibility == "no_points":
 
         bot_msg = await context.bot.send_message(
             chat_id,

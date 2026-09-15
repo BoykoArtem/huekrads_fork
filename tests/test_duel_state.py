@@ -1,11 +1,63 @@
 from handlers.duel_state import (
     _advance_duel_round,
     _build_duel_result_plan,
+    _get_duel_participant_ineligibility,
     _is_miss_roll,
     _is_suicide_roll,
     _resolve_zone_outcome,
     _set_attack_choice,
 )
+
+
+def test_duel_participant_ineligibility_returns_none_for_eligible_user():
+    assert _get_duel_participant_ineligibility({
+        "dick_stolen_today": False,
+        "points": 1,
+    }) is None
+
+
+def test_duel_participant_ineligibility_reports_no_dick():
+    assert _get_duel_participant_ineligibility({
+        "dick_stolen_today": True,
+        "points": 20,
+    }) == "no_dick"
+
+
+def test_duel_participant_ineligibility_reports_no_points_at_zero():
+    assert _get_duel_participant_ineligibility({
+        "dick_stolen_today": False,
+        "points": 0,
+    }) == "no_points"
+
+
+def test_duel_participant_ineligibility_reports_no_points_below_zero():
+    assert _get_duel_participant_ineligibility({
+        "dick_stolen_today": False,
+        "points": -1,
+    }) == "no_points"
+
+
+def test_duel_participant_ineligibility_prioritizes_no_dick():
+    assert _get_duel_participant_ineligibility({
+        "dick_stolen_today": True,
+        "points": 0,
+    }) == "no_dick"
+
+
+def test_duel_participant_ineligibility_does_not_mutate_snapshot():
+    user = {
+        "dick_stolen_today": False,
+        "points": 20,
+        "unrelated": {"preserved": True},
+    }
+    before = {
+        **user,
+        "unrelated": user["unrelated"].copy(),
+    }
+
+    _get_duel_participant_ineligibility(user)
+
+    assert user == before
 
 
 def test_build_duel_result_plan_without_steal():

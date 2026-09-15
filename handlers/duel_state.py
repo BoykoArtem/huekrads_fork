@@ -13,6 +13,14 @@ def _resolve_zone_outcome(strike_zone: str, block_zone: str) -> str:
     return "block" if strike_zone == block_zone else "hit"
 
 
+def _get_duel_participant_ineligibility(user: dict) -> str | None:
+    if user["dick_stolen_today"]:
+        return "no_dick"
+    if user["points"] <= 0:
+        return "no_points"
+    return None
+
+
 def _build_duel_result_plan(
     winner: dict,
     loser: dict,
