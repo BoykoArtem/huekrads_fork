@@ -41,7 +41,11 @@ from handlers.duel_text import (
     _plural_rounds,
     get_huyanie_title,
 )
-from handlers.duel_formatting import boss_player_title as _boss_player_title
+from handlers.duel_formatting import (
+    _boss_phase_text,
+    _boss_players_status_text,
+    boss_player_title as _boss_player_title,
+)
 from handlers.duel_input import extract_username as _extract_username
 
 AUTO_DELETE_DELAY = 60
@@ -2523,63 +2527,13 @@ def _legacy_boss_phase_status(participant, phase):
     return ""
 
 
-def _boss_players_status_text(battle):
-    lines = []
-
-    for participant in battle["participants"].values():
-        title = _boss_player_title(participant)
-        status = _boss_phase_status(
-            participant,
-            battle["phase"],
-        )
-
-        lines.append(
-            f"• <b>{title}</b> — {status}"
-        )
-
-    return "\n".join(lines)
-
-
-def _boss_phase_text(battle):
-    boss = battle["boss"]
-
-    alive_count = len(_boss_alive_players(battle))
-    total_count = len(battle["participants"])
-
-    if battle["phase"] == "attack":
-        return (
-            f"💀 <b>{boss['name']} — РАУНД {battle['round']}</b>\n\n"
-            f"⚔️ <b>ФАЗА АТАКИ</b>\n"
-            f"Каждый живой игрок выбирает, куда ударить босса.\n\n"
-            f"🎯 Урон боссу: "
-            f"<b>{battle['hits']} / {BOSS_REQUIRED_HITS}</b>\n"
-            f"👥 В живых: <b>{alive_count} / {total_count}</b>\n\n"
-            f"<b>Игроки:</b>\n"
-            f"{_boss_players_status_text(battle)}\n\n"
-            f"⚔️ Выберите зону атаки:"
-        )
-
-    return (
-        f"💀 <b>{boss['name']} — РАУНД {battle['round']}</b>\n\n"
-        f"🛡 <b>ФАЗА ЗАЩИТЫ</b>\n"
-        f"Босс сейчас атакует. Каждый живой игрок "
-        f"выбирает, какую зону защищать.\n\n"
-        f"🎯 Урон боссу: "
-        f"<b>{battle['hits']} / {BOSS_REQUIRED_HITS}</b>\n"
-        f"👥 В живых: <b>{alive_count} / {total_count}</b>\n\n"
-        f"<b>Игроки:</b>\n"
-        f"{_boss_players_status_text(battle)}\n\n"
-        f"🛡 Выберите зону защиты:"
-    )
-
-
 async def _boss_render_phase(context, chat_id):
     battle = ACTIVE_BOSS_BATTLES.get(chat_id)
 
     if not battle:
         return
 
-    text = _boss_phase_text(battle)
+    text = _boss_phase_text(battle, BOSS_REQUIRED_HITS)
 
     if battle["phase"] == "attack":
         keyboard = _boss_attack_keyboard(

@@ -40,6 +40,8 @@ def test_boss_state_helpers():
     assert duel._boss_phase_status is duel_text._boss_phase_status
     assert duel._boss_battle_hero is duel_text._boss_battle_hero
     assert duel._boss_player_title is duel_formatting.boss_player_title
+    assert duel._boss_players_status_text is duel_formatting._boss_players_status_text
+    assert duel._boss_phase_text is duel_formatting._boss_phase_text
     assert duel._boss_alive_players(battle) == [{"alive": True}]
     assert duel._boss_all_alive_chosen({"participants": {1: {"alive": True, "attack": "head"}}}, "attack")
     participant = {"alive": True, "attack": "head", "block": None}
@@ -50,3 +52,15 @@ def test_boss_state_helpers():
     ]
     assert duel._boss_battle_hero(players) == duel._legacy_boss_battle_hero(players)
     assert duel._boss_player_title({"data": {"username": "@boss_tester"}}) == "boss_tester"
+    phase_battle = {
+        "boss": {"name": "Тестер"}, "round": 2, "hits": 1, "phase": "attack",
+        "participants": {1: {"alive": True, "data": {"username": "@alive"}, "attack": "head"}, 2: {"alive": False, "data": {"display_name": "Dead"}}},
+    }
+    assert f"<b>1 / {duel.BOSS_REQUIRED_HITS}</b>" in duel._boss_phase_text(
+        phase_battle, duel.BOSS_REQUIRED_HITS
+    )
+    assert "<b>alive</b> — 🟢 выбрал" in duel._boss_players_status_text(phase_battle)
+    phase_battle["phase"] = "block"
+    assert "<b>ФАЗА ЗАЩИТЫ</b>" in duel._boss_phase_text(
+        phase_battle, duel.BOSS_REQUIRED_HITS
+    )
