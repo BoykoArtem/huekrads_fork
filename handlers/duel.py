@@ -39,6 +39,7 @@ from handlers.duel_text import (
     _plural_rounds,
     get_huyanie_title,
 )
+from handlers.duel_input import extract_username as _extract_username
 
 AUTO_DELETE_DELAY = 60
 MOVE_TIMEOUT = 10  # 10 секунд на ход
@@ -315,23 +316,6 @@ def schedule_auto_delete(
                 "message_ids": message_ids,
             },
         )
-
-
-def _extract_username(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> str | None:
-
-    if context.args:
-        return context.args[0].strip().lstrip("@")
-
-    if update.message and update.message.text:
-        parts = update.message.text.split()
-
-        if len(parts) > 1:
-            return parts[1].strip().lstrip("@")
-
-    return None
 
 
 async def send_and_schedule(

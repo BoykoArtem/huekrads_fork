@@ -21,11 +21,13 @@ def test_duel_keyboard_callback_data_contract():
 
 def test_duel_public_callback_alias_and_pure_helpers():
     from handlers import duel
+    from handlers import duel_input
     from handlers import duel_text
 
     assert duel.duel_action_callback is duel.duel_strike_callback
     assert duel.get_huyanie_title is duel_text.get_huyanie_title
     assert duel._plural_rounds is duel_text._plural_rounds
+    assert duel._extract_username is duel_input.extract_username
     for count in (0, 9, 10, 57, 100, 101):
         assert duel.get_huyanie_title(count) == duel._legacy_get_huyanie_title(count)
     for value in (0, 1, 2, 4, 5, 11, 12, 21, 25):
