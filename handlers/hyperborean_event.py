@@ -269,12 +269,11 @@ def _claim_hyperboreic_huy_for_other(
                 conn.execute(
                     """
                     UPDATE duel_users
-                    SET points = 0, dick_stolen_today = 1
+                    SET dick_stolen_today = 1
                     WHERE chat_id = ? AND user_id = ?
                     """,
                     (chat_id, user_id),
                 )
-                selected_user["points"] = 0
                 return "exploded", selected_user, True
 
             return "unchanged", selected_user, False
@@ -364,9 +363,17 @@ async def hyperboreic_huy_callback(
 
         if result == "exploded":
             if event_type == "arthur":
-                text = get_text("hyperborean.other.exploded.arthur", title=title)
+                text = get_text(
+                    "hyperborean.other.exploded.arthur",
+                    title=title,
+                    points=selected_user["points"],
+                )
             else:
-                text = get_text("hyperborean.other.exploded.hyperboreic", title=title)
+                text = get_text(
+                    "hyperborean.other.exploded.hyperboreic",
+                    title=title,
+                    points=selected_user["points"],
+                )
             await query.answer(get_text("hyperborean.other.answer.exploded"))
         else:
             if event_type == "arthur":
