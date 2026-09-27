@@ -24,6 +24,7 @@ from handlers.duel_service import (
 )
 from database import format_user_title
 from text_resources import get_text
+from module_settings import is_module_enabled
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,9 @@ async def publish_persistent_duel_outbox(
         return PersistentDuelSendResult("not_found")
 
     kind = publication["kind"]
+    if kind == "pocket_drop" and not is_module_enabled(chat_id, "duel_random_events"):
+        release_duel_publication(chat_id, publication_id, publication["attempt_count"])
+        return PersistentDuelSendResult("module_disabled", publication)
     payload = publication["payload"]
     try:
         if kind in ("attack_prompt", "block_prompt"):

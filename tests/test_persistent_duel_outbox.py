@@ -435,6 +435,50 @@ def test_pocket_miss_spends_one_roll_and_checkpoints(temp_database, monkeypatch)
     assert trace.trace == [("random", 0.99)]
 
 
+def test_pocket_drop_off_checkpoints_without_event_or_rng(temp_database, monkeypatch):
+    from module_settings import set_module_enabled
+
+    finished, final_pub, _ = finish_and_get_final(temp_database, monkeypatch)
+    item = database.add_duel_inventory_item(CHAT, 2, "po_lochki")
+    mark_final_published(CHAT, final_pub)
+    set_module_enabled(CHAT, "duel_random_events", False, 42)
+    trace = install_rng(monkeypatch)
+
+    result = duel_service.process_persistent_duel_pocket_drop(CHAT, finished.session["id"])
+
+    assert result.reason == "disabled"
+    assert get_duel_session(CHAT, finished.session["id"])["pocket_done_at"] is not None
+    assert inventory(temp_database) == [(item["id"], 2, item["item_id"])]
+    assert event(temp_database) == []
+    assert all(kind != "pocket_drop" for _, kind, _, _ in outbox(temp_database))
+    assert trace.trace == []
+    assert duel_service.process_persistent_duel_pocket_drop(CHAT, finished.session["id"]).reason == "already_done"
+    assert trace.trace == []
+
+
+@pytest.mark.asyncio
+async def test_pending_pocket_publication_waits_while_module_off(
+    temp_database, monkeypatch, fake_context,
+):
+    from module_settings import set_module_enabled
+
+    finished, final_pub, _ = finish_and_get_final(temp_database, monkeypatch)
+    database.add_duel_inventory_item(CHAT, 2, "po_lochki")
+    mark_final_published(CHAT, final_pub)
+    install_rng(monkeypatch, [0.0])
+    dropped = duel_service.process_persistent_duel_pocket_drop(CHAT, finished.session["id"])
+    assert dropped.reason == "dropped"
+    set_module_enabled(CHAT, "duel_random_events", False, 42)
+
+    result = await publish_persistent_duel_outbox(
+        CHAT, dropped.publication["id"], fake_context.bot,
+    )
+
+    assert result.reason == "module_disabled"
+    fake_context.bot.send_message.assert_not_awaited()
+    assert get_duel_publication(CHAT, dropped.publication["id"])["status"] == "pending"
+
+
 def test_pocket_hit_moves_exact_instance_and_creates_one_drop_intent(
     temp_database, monkeypatch,
 ):

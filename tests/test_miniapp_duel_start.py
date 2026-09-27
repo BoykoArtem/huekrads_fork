@@ -32,6 +32,28 @@ def session_count(chat_id):
 
 
 @pytest.mark.asyncio
+async def test_random_events_off_keeps_manual_miniapp_duel_start(
+    temp_database, fake_context, monkeypatch,
+):
+    from module_settings import set_module_enabled
+
+    register(CHAT_A, 101, "hero")
+    register(CHAT_A, 202, "opponent")
+    set_module_enabled(CHAT_A, "duel_random_events", False, 42)
+    choice = Mock(return_value=True)
+    monkeypatch.setattr(duel_service.random, "choice", choice)
+    async with client_for(fake_context.bot, fake_context.job_queue) as client:
+        headers = await session_for(client, CHAT_A, 101)
+        started = await client.post(
+            "/api/v1/duel/start", headers=headers, json={"opponent_user_id": 202},
+        )
+        assert started.status_code == 201
+        assert get_current_duel_session(CHAT_A)["status"] == "active"
+        assert (await client.get("/api/v1/duel/active", headers=headers)).json()["duel"]
+        choice.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_same_chat_start_publishes_and_is_visible_in_active_read(
     temp_database, fake_context, monkeypatch,
 ):

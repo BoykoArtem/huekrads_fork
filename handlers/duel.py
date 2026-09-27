@@ -9,6 +9,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
 from text_resources import get_text
+from module_settings import is_module_enabled
 from config import (
     TOP_SORT_BY,
     ADMIN_IDS,
@@ -184,6 +185,8 @@ async def gnomed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _maybe_drop_loser_inventory_item(chat_id: int, loser_id: int) -> dict | None:
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        return None
     inventory = get_droppable_duel_inventory(
         get_duel_inventory(chat_id, loser_id)
     )
@@ -197,6 +200,9 @@ def _maybe_drop_loser_inventory_item(chat_id: int, loser_id: int) -> dict | None
 
 
 async def _publish_duel_drop(context, drop: dict) -> None:
+    if not is_module_enabled(drop["chat_id"], "duel_random_events"):
+        restore_unpublished_duel_drop(drop, None)
+        return
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
         get_text("duel.item_event.button"),
         callback_data=f"{DUEL_ITEM_EVENT_CALLBACK_PREFIX}{drop['event_id']}",
@@ -2844,6 +2850,9 @@ async def _start_boss_battle(
     if chat_id in ACTIVE_BOSS_BATTLES:
         return False
 
+    if include_registrations and not is_module_enabled(chat_id, "boss_auto"):
+        return False
+
     registered_rows = (
         _boss_get_registered_users(chat_id)
         if include_registrations
@@ -2851,6 +2860,9 @@ async def _start_boss_battle(
     )
 
     boss = random.choice(BOSSES)
+
+    if include_registrations and not is_module_enabled(chat_id, "boss_auto"):
+        return False
 
     bot_msg = await context.bot.send_message(
         chat_id=chat_id,
@@ -3094,6 +3106,9 @@ async def boss_daily_job(context: ContextTypes.DEFAULT_TYPE):
     disabled = 0
 
     for chat_id in chats:
+        if not is_module_enabled(chat_id, "boss_auto"):
+            skipped += 1
+            continue
         if chat_id in ACTIVE_BOSS_BATTLES:
             skipped += 1
             continue

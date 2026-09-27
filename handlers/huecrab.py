@@ -16,12 +16,13 @@ from config import (
 from database import (
     bind_huecrab_event, claim_due_item_for_huecrab, create_huecrab_event,
     discard_unpublished_huecrab_event, format_user_title,
-    get_duel_dwarf_name, get_duel_item_event_chat_ids, has_active_huecrab_event,
+    get_duel_dwarf_name, get_duel_item_event, get_duel_item_event_chat_ids, has_active_huecrab_event,
     list_due_huecrab_item_events, list_unannounced_huecrab_claims,
     mark_huecrab_claim_announced, tame_huecrab_event,
 )
 from handlers.duel_items import DUEL_ITEMS, get_duel_item_name
 from text_resources import get_text
+from module_settings import is_module_enabled
 
 
 HUECRAB_CALLBACK_PREFIX = "huecrab_tame_"
@@ -30,6 +31,8 @@ HUECRAB_DAILY_SPAWNS: dict[int, tuple[date, int]] = {}
 
 
 async def spawn_huecrab_event(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        return
     today = date.today()
     last_date, count = HUECRAB_DAILY_SPAWNS.get(chat_id, (today, 0))
     if last_date != today:
@@ -47,6 +50,9 @@ async def spawn_huecrab_event(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
             callback_data=f"{HUECRAB_CALLBACK_PREFIX}{event_id}",
         )
     ]])
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        discard_unpublished_huecrab_event(event_id)
+        return
     try:
         message = await context.bot.send_message(
             chat_id=chat_id, text=get_text("huecrab.spawn"),
@@ -129,6 +135,9 @@ async def huecrab_autoloot_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     for event_id in due:
         try:
+            event = get_duel_item_event(event_id)
+            if event is None or not is_module_enabled(event["chat_id"], "duel_random_events"):
+                continue
             claim_due_item_for_huecrab(
                 event_id, time(), HUECRAB_AUTOLOOT_DELAY_SECONDS,
                 lambda: random.choice(DUEL_ITEMS)["id"], random.choice,
@@ -142,6 +151,8 @@ async def huecrab_autoloot_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     for claim in pending:
         try:
+            if not is_module_enabled(claim["chat_id"], "duel_random_events"):
+                continue
             await context.bot.edit_message_text(
                 chat_id=claim["chat_id"], message_id=claim["message_id"],
                 text=_autoloot_text(claim), parse_mode="HTML", reply_markup=None,

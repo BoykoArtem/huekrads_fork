@@ -57,7 +57,7 @@ def test_bot_command_menu_preserves_descriptions_and_order():
         (command.command, command.description) for command in bot.BOT_COMMANDS
     ]
     assert [(command.command, command.description) for command in bot.BOT_COMMANDS
-            if command.command != "duel_app"] == [
+            if command.command not in {"duel_app", "modules"}] == [
         ("start", "Запустить бота"),
         ("help", "Хелп по командам"),
         ("donate", "Поддержать проект"),

@@ -3,6 +3,7 @@
 import json
 import logging
 import random
+from module_settings import is_module_enabled
 import re
 from collections import Counter
 from html import escape
@@ -156,11 +157,17 @@ async def _spawn_duel_item_event(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
 ):
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        return
     if random.random() >= DUEL_ITEM_EVENT_CHANCE:
         return
 
     event_id = create_duel_item_event(chat_id)
     if event_id is None:
+        return
+
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        discard_unpublished_duel_item_event(event_id)
         return
 
     intro = random.choice(get_text_list("duel.item_event.intros"))
@@ -172,6 +179,10 @@ async def _spawn_duel_item_event(
             )
         ]]
     )
+
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        discard_unpublished_duel_item_event(event_id)
+        return
 
     try:
         message = await context.bot.send_message(
@@ -228,7 +239,8 @@ async def duel_item_event_callback(
         chat_id,
         query.from_user.id,
         lambda: random.choice(DUEL_ITEMS)["id"],
-        lambda: random.random() < HUEGRYZ_CHANCE,
+        lambda: is_module_enabled(chat_id, "duel_random_events")
+        and random.random() < HUEGRYZ_CHANCE,
     )
     if status == "not_registered":
         await query.answer(get_text("duel.item_event.not_registered"), show_alert=True)

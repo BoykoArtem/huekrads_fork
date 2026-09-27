@@ -11,6 +11,7 @@ from telegram.ext import ContextTypes
 
 from database import format_user_title, get_all_chats, get_or_create_duel_user
 from text_resources import get_text
+from module_settings import is_module_enabled
 
 HYPERBOREAN_HUY_CHANCE = 0.05
 HYPERBOREAN_HUY_CHECK_MINUTES = 60
@@ -39,6 +40,9 @@ async def _spawn_hyperboreic_huy(
     if chat_id in ACTIVE_HYPERBOREAN_EVENTS:
         return
 
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        return
+
     today = _current_date()
     last_spawn_date, daily_count = HYPERBOREAN_HUY_DAILY_SPAWNS.get(
         chat_id,
@@ -50,6 +54,9 @@ async def _spawn_hyperboreic_huy(
         return
 
     if random.random() >= HYPERBOREAN_HUY_CHANCE:
+        return
+
+    if not is_module_enabled(chat_id, "duel_random_events"):
         return
 
     event_type = random.choice(
@@ -76,6 +83,9 @@ async def _spawn_hyperboreic_huy(
             ]
         ]
     )
+
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        return
 
     try:
         message = await context.bot.send_message(

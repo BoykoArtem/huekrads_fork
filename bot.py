@@ -100,6 +100,7 @@ from miniapp_api import create_miniapp_api
 from handlers.monthly_summary import monthly_summary_job, summary_command
 from handlers.elite_ball import ball_command, elite_ball_callback, elite_ball_question, ELITE_BALL_CALLBACK_DATA
 from handlers.dig import dig_command
+from handlers.modules import modules_command, modules_callback
 from handlers.huecrab import (
     HUECRAB_CHECK_MINUTES, huecrab_autoloot_job,
     huecrab_event_job, huecrab_tame_callback,
@@ -137,6 +138,7 @@ BOT_COMMANDS = [
     BotCommand("duel_delete", get_text("menu.commands.duel_delete")),
     BotCommand("boss", get_text("menu.commands.boss")),
     BotCommand("boss_reg", get_text("menu.commands.boss_reg")),
+    BotCommand("modules", get_text("modules.title")),
 ]
 
 
@@ -396,6 +398,10 @@ async def main():
     application.add_handler(CommandHandler("summary", summary_command))
     application.add_handler(CommandHandler("dig", dig_command))
     application.add_handler(CommandHandler("ball", ball_command))
+    application.add_handler(CommandHandler("modules", modules_command))
+    application.add_handler(CallbackQueryHandler(
+        modules_callback, pattern=r"^module_(?:toggle:|close$)",
+    ))
 
     application.add_handler(
         CallbackQueryHandler(

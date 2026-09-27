@@ -2,6 +2,7 @@
 
 import logging
 import random
+from module_settings import is_module_enabled
 from dataclasses import dataclass
 from html import escape
 
@@ -589,6 +590,13 @@ def process_persistent_duel_pocket_drop(
         )
         if final_publication is None or final_publication["status"] != "delivered":
             return PersistentDuelPocketResult("not_published", session)
+        if not is_module_enabled(chat_id, "duel_random_events"):
+            timestamp = utc_unix_milliseconds() if now_ms is None else now_ms
+            if not mark_duel_pocket_done_in_transaction(
+                chat_id, duel_id, timestamp, cursor=cursor,
+            ):
+                raise RuntimeError("Disabled pocket checkpoint could not be stored")
+            return PersistentDuelPocketResult("disabled", session)
         loser_id = session["result"]["loser_user_id"]
         inventory = get_droppable_duel_inventory(
             get_duel_inventory_in_transaction(cursor, chat_id, loser_id)

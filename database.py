@@ -139,6 +139,17 @@ def init_db():
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chat_module_settings (
+                chat_id INTEGER NOT NULL,
+                module_id TEXT NOT NULL,
+                enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+                updated_at TEXT NOT NULL,
+                updated_by INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, module_id)
+            )
+        """)
+
         # Миграция существующей БД: добавляем настройку боссов,
         # если таблица была создана в старой версии бота.
         cursor.execute("PRAGMA table_info(chat_settings)")
