@@ -4,8 +4,9 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from module_settings import (
-    MODULE_CATALOG, is_module_admin, is_module_enabled, toggle_module_enabled,
+    MODULE_CATALOG, is_module_enabled, toggle_module_enabled,
 )
+from handlers.utils import is_admin
 from text_resources import get_text
 
 
@@ -26,7 +27,7 @@ async def modules_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     chat = update.effective_chat
     if chat is None:
         return
-    if not is_module_admin(getattr(update.effective_user, "id", None)):
+    if not is_admin(getattr(update.effective_user, "id", None)):
         await context.bot.send_message(
             chat_id=chat.id, text=get_text("modules.forbidden"),
         )
@@ -43,7 +44,7 @@ async def modules_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     query = update.callback_query
     if query is None:
         return
-    if not is_module_admin(getattr(update.effective_user, "id", None)):
+    if not is_admin(getattr(update.effective_user, "id", None)):
         await query.answer(get_text("modules.forbidden"))
         return
     message = query.message

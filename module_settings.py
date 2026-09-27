@@ -1,8 +1,5 @@
 """Per-chat controls for sources of unsolicited bot activity."""
 
-import logging
-import os
-import re
 import sqlite3
 
 from database import get_db
@@ -77,18 +74,3 @@ def toggle_module_enabled(chat_id: int, module_id: str, updated_by: int) -> bool
             (chat_id, module_id, int(enabled), updated_by),
         )
     return enabled
-
-
-def get_module_admin_ids() -> frozenset[int]:
-    raw = os.getenv("BOT_ADMIN_USER_IDS", "")
-    if not raw.strip():
-        return frozenset()
-    parts = [part.strip() for part in raw.split(",")]
-    if any(not re.fullmatch(r"[0-9]+", part) or int(part) <= 0 for part in parts):
-        logging.error("BOT_ADMIN_USER_IDS contains an invalid user ID; module access disabled")
-        return frozenset()
-    return frozenset(int(part) for part in parts)
-
-
-def is_module_admin(user_id: int | None) -> bool:
-    return user_id is not None and user_id in get_module_admin_ids()

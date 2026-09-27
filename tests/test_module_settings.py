@@ -1,3 +1,4 @@
+import importlib
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -53,27 +54,34 @@ def test_concurrent_toggle_callbacks_produce_valid_boolean_state(temp_database):
 
 
 @pytest.mark.parametrize("raw, expected", [
-    ("123", frozenset({123})),
-    ("123,456", frozenset({123, 456})),
-    (" 123 , 456 ", frozenset({123, 456})),
-    ("", frozenset()),
-    ("123,bad", frozenset()),
-    ("123,", frozenset()),
+    ("123", {123}),
+    ("123,456", {123, 456}),
+    (" 123 , 456 ", {123, 456}),
+    ("", set()),
+    ("123,bad", {123}),
+    ("123,", {123}),
 ])
-def test_admin_allowlist_parsing(monkeypatch, raw, expected):
-    from module_settings import get_module_admin_ids
+def test_existing_admin_ids_parsing(monkeypatch, raw, expected):
+    import config
 
-    monkeypatch.setenv("BOT_ADMIN_USER_IDS", raw)
-    assert get_module_admin_ids() == expected
+    try:
+        with monkeypatch.context() as patch:
+            patch.setenv("ADMIN_IDS", raw)
+            assert importlib.reload(config).ADMIN_IDS == expected
+    finally:
+        importlib.reload(config)
 
 
-def test_invalid_admin_config_logs_without_exposing_value(monkeypatch, caplog):
-    from module_settings import get_module_admin_ids
+def test_existing_is_admin_uses_numeric_ids(monkeypatch):
+    from handlers import utils
 
-    monkeypatch.setenv("BOT_ADMIN_USER_IDS", "123,not-a-user-id")
-    assert get_module_admin_ids() == frozenset()
-    assert "BOT_ADMIN_USER_IDS contains an invalid user ID" in caplog.text
-    assert "not-a-user-id" not in caplog.text
+    monkeypatch.setattr(utils, "ADMIN_IDS", {123, 456})
+    assert utils.is_admin(123)
+    assert utils.is_admin(456)
+    assert not utils.is_admin(789)
+    assert not utils.is_admin("123")
+    monkeypatch.setattr(utils, "ADMIN_IDS", set())
+    assert not utils.is_admin(123)
 
 
 def _update(chat_id, chat_type, user_id, *, callback=None, message_chat_id=None):
@@ -93,9 +101,10 @@ def _update(chat_id, chat_type, user_id, *, callback=None, message_chat_id=None)
 @pytest.mark.asyncio
 async def test_modules_command_and_callback_require_server_allowlist(monkeypatch, temp_database, fake_context):
     from handlers.modules import modules_callback, modules_command
+    from handlers import utils
     from module_settings import is_module_enabled
 
-    monkeypatch.setenv("BOT_ADMIN_USER_IDS", "42")
+    monkeypatch.setattr(utils, "ADMIN_IDS", {42})
     unauthorized = _update(-1, "group", 99)
     await modules_command(unauthorized, fake_context)
     assert "reply_markup" not in fake_context.bot.send_message.await_args.kwargs
@@ -127,9 +136,10 @@ async def test_modules_command_and_callback_require_server_allowlist(monkeypatch
 @pytest.mark.asyncio
 async def test_private_and_unknown_callbacks_cannot_mutate(monkeypatch, temp_database, fake_context):
     from handlers.modules import modules_callback, modules_command
+    from handlers import utils
     from module_settings import is_module_enabled
 
-    monkeypatch.setenv("BOT_ADMIN_USER_IDS", "42")
+    monkeypatch.setattr(utils, "ADMIN_IDS", {42})
     await modules_command(_update(42, "private", 42), fake_context)
     assert "reply_markup" not in fake_context.bot.send_message.await_args.kwargs
     await modules_callback(
@@ -140,6 +150,23 @@ async def test_private_and_unknown_callbacks_cannot_mutate(monkeypatch, temp_dat
     )
     assert is_module_enabled(42, "boss_auto")
     assert is_module_enabled(-1, "boss_auto")
+
+
+@pytest.mark.asyncio
+async def test_empty_existing_admin_ids_grants_no_module_access(
+    monkeypatch, temp_database, fake_context,
+):
+    from handlers import utils
+    from handlers.modules import modules_callback, modules_command
+    from module_settings import is_module_enabled
+
+    monkeypatch.setattr(utils, "ADMIN_IDS", set())
+    await modules_command(_update(-1, "group", 42), fake_context)
+    await modules_callback(
+        _update(-1, "group", 42, callback="module_toggle:boss_auto"), fake_context,
+    )
+    assert is_module_enabled(-1, "boss_auto")
+    assert "reply_markup" not in fake_context.bot.send_message.await_args.kwargs
 
 
 @pytest.mark.asyncio
