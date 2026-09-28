@@ -315,9 +315,10 @@ async def test_boss_callback_reports_exact_action_acknowledgements(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def clear_active_boss_battles():
-    from handlers import duel
+def clear_active_boss_battles(tmp_path, monkeypatch):
+    from handlers import boss_registration, duel
 
+    monkeypatch.setattr(boss_registration, "_BOSS_REG_DB_PATH", tmp_path / "registrations.db")
     duel.ACTIVE_BOSS_BATTLES.clear()
     yield
     duel.ACTIVE_BOSS_BATTLES.clear()
@@ -334,9 +335,9 @@ async def test_start_boss_battle_creates_complete_join_state(
     boss = {"name": "Выбранный Босс", "emoji": "💀", "description": "desc"}
     choose = Mock(return_value=boss)
     tasks = TaskRecorder()
-    registrations = Mock(side_effect=AssertionError("registrations were read"))
+    registrations = Mock(return_value=[])
     monkeypatch.setattr(duel.random, "choice", choose)
-    monkeypatch.setattr(duel, "_boss_get_registered_users", registrations)
+    monkeypatch.setattr(duel, "_boss_consume_registrations", registrations)
     monkeypatch.setattr(duel.asyncio, "create_task", tasks)
 
     started = await duel._start_boss_battle(
@@ -360,7 +361,7 @@ async def test_start_boss_battle_creates_complete_join_state(
     assert tasks.tasks[0].coroutine_name == "_boss_join_timer"
     assert tasks.tasks[0].coroutine_locals["chat_id"] == chat_id
     choose.assert_called_once_with(duel.BOSSES)
-    registrations.assert_not_called()
+    registrations.assert_called_once_with(chat_id)
     send_kwargs = fake_context.bot.send_message.await_args.kwargs
     assert send_kwargs["text"] == (
         "💀 <b>Выбранный Босс</b>\n\n"
@@ -417,7 +418,7 @@ async def test_start_boss_battle_preserves_pre_registered_join_presentation(
     boss = {"name": "Выбранный Босс", "emoji": "💀", "description": "desc"}
     tasks = TaskRecorder()
     monkeypatch.setattr(duel.random, "choice", Mock(return_value=boss))
-    monkeypatch.setattr(duel, "_boss_get_registered_users", Mock(return_value=[(1,)]))
+    monkeypatch.setattr(duel, "_boss_consume_registrations", Mock(return_value=[(1,)]))
     monkeypatch.setattr(
         duel,
         "_boss_tg_user_from_registration",
@@ -480,6 +481,7 @@ async def test_boss_join_timeout_removes_empty_battle_and_edits_message(
             "Босс постоял, посмотрел на этот позор и ушёл."
         ),
         parse_mode="HTML",
+        reply_markup=duel._boss_next_registration_keyboard(),
     )
 
 

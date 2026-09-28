@@ -410,9 +410,7 @@
         notice("Сейчас битвы с боссом нет."));
       addHeading(content, "Запись на бой");
       const registration = data.registration || {};
-      content.append(notice(registration.open ?
-        "Запись до 13:37 по Москве открыта в Telegram через /boss_reg." :
-        "Запись на сегодняшний бой закрыта."));
+      content.append(notice("Запись на следующую битву открыта в Telegram через /boss_reg."));
       const grid = element("div", "data-grid");
       grid.append(
         dataCell("Записано участников", registration.participants_count ?? 0),

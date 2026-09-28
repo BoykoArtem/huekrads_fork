@@ -28,7 +28,7 @@ def _public_boss(boss: dict) -> dict:
     }
 
 
-def _battle_snapshot(battle: dict, viewer_user_id: int) -> dict:
+def _battle_snapshot(battle: dict, chat_id: int, viewer_user_id: int) -> dict:
     phase = battle["phase"]
     participants = battle["participants"]
     viewer = participants.get(viewer_user_id)
@@ -53,6 +53,7 @@ def _battle_snapshot(battle: dict, viewer_user_id: int) -> dict:
         viewer.get(choice_field)
         if viewer and viewer["alive"] and choice_field else None
     )
+    count, registered = boss_registration._boss_registration_snapshot(chat_id, viewer_user_id)
     return {
         "battle": {
             "battle_id": battle.get("battle_id"),
@@ -68,7 +69,11 @@ def _battle_snapshot(battle: dict, viewer_user_id: int) -> dict:
             "alive_count": sum(row["alive"] for row in rows),
             "participants": rows,
         },
-        "registration": None,
+        "registration": {
+            "open": True,
+            "participants_count": count,
+            "viewer_registered": registered,
+        },
         "recent_result": None,
         "available_actions": _available_actions(battle, viewer),
         "viewer": {
@@ -137,7 +142,7 @@ async def get_boss_battle_read_model(chat_id: int, viewer_user_id: int) -> dict:
     if battle is not None:
         async with battle["lock"]:
             if duel.ACTIVE_BOSS_BATTLES.get(chat_id) is battle:
-                return _battle_snapshot(battle, viewer_user_id)
+                return _battle_snapshot(battle, chat_id, viewer_user_id)
 
     count, registered = boss_registration._boss_registration_snapshot(chat_id, viewer_user_id)
     result = get_latest_boss_result(chat_id)

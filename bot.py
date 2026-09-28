@@ -475,7 +475,7 @@ async def main():
     application.add_handler(
         CallbackQueryHandler(
             boss_callback,
-            pattern=r"^boss_(join|attack_|block_)",
+            pattern=r"^boss_(join$|reg_next$|attack_|block_)",
         )
     )
 

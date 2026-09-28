@@ -134,11 +134,10 @@ from handlers.hyperborean_event import (
     hyperboreic_huy_daily_job,
 )
 from handlers.boss_registration import (
-    _boss_clear_registrations,
+    _boss_consume_registrations,
     _boss_get_registered_chat_ids,
     _boss_get_registered_users,
     _boss_register_user,
-    _boss_registration_is_open,
 )
 from handlers.duel_items import (
     DUEL_ITEM_EVENT_CALLBACK_PREFIX,
@@ -1949,6 +1948,7 @@ BOSS_JOIN_TIMEOUT = 30
 BOSS_ZONES = ("head", "body", "dick")
 
 ACTIVE_BOSS_BATTLES = {}
+_BOSS_START_LOCKS = {}
 
 # ------------------------------------------------------------
 # КЛАВИАТУРЫ
@@ -2301,6 +2301,21 @@ async def boss_callback(
         return
 
     data = query.data
+    if data == "boss_reg_next":
+        chat = getattr(getattr(query, "message", None), "chat", None)
+        if chat is None or chat.type not in {"group", "supergroup"}:
+            await query.answer(get_text("boss.registration.group_only"), show_alert=True)
+            return
+        if not query.from_user:
+            return
+        set_boss_enabled(chat.id, True)
+        added = _boss_register_user(chat.id, query.from_user)
+        await query.answer(get_text(
+            "boss.registration.callback_registered" if added
+            else "boss.registration.callback_already_registered"
+        ))
+        return
+
     zone = None
     round_num = None
     malformed = False
@@ -2554,6 +2569,15 @@ def _legacy_boss_battle_hero(participants):
 
 
 
+def _boss_next_registration_keyboard():
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            get_text("boss.registration.next_button"),
+            callback_data="boss_reg_next",
+        )
+    ]])
+
+
 async def _boss_send_final_report(
     context,
     chat_id,
@@ -2631,6 +2655,8 @@ async def _boss_send_final_report(
     if not chunks:
         chunks = [text]
 
+    registration_button = _boss_next_registration_keyboard()
+
     first_message_id = battle.get("message_id")
 
     try:
@@ -2639,6 +2665,7 @@ async def _boss_send_final_report(
             message_id=first_message_id,
             text=chunks[0],
             parse_mode="HTML",
+            reply_markup=registration_button if len(chunks) == 1 else None,
         )
     except Exception:
         logging.exception(
@@ -2652,6 +2679,7 @@ async def _boss_send_final_report(
                 chat_id=chat_id,
                 text=chunks[0],
                 parse_mode="HTML",
+                reply_markup=registration_button if len(chunks) == 1 else None,
             )
         except Exception:
             logging.exception(
@@ -2660,12 +2688,13 @@ async def _boss_send_final_report(
                 chat_id,
             )
 
-    for chunk in chunks[1:]:
+    for index, chunk in enumerate(chunks[1:], start=1):
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=chunk,
                 parse_mode="HTML",
+                reply_markup=registration_button if index == len(chunks) - 1 else None,
             )
         except Exception:
             logging.exception(
@@ -2840,24 +2869,27 @@ async def _start_boss_battle(
     chat_id: int,
     include_registrations=False,
 ):
+    lock = _BOSS_START_LOCKS.setdefault(chat_id, asyncio.Lock())
+    async with lock:
+        return await _start_boss_battle_locked(context, chat_id, include_registrations)
+
+
+async def _start_boss_battle_locked(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    include_registrations=False,
+):
     """
     Запускает набор участников на битву с боссом.
 
-    При ежедневном запуске в 13:37 include_registrations=True:
-    все записавшиеся через /boss_reg автоматически становятся
-    участниками, как если бы они сами вступили в набор.
+    include_registrations=True marks the scheduled 13:37 start and applies
+    boss_auto gating. Both scheduled and manual starts consume the same queue.
     """
     if chat_id in ACTIVE_BOSS_BATTLES:
         return False
 
     if include_registrations and not is_module_enabled(chat_id, "boss_auto"):
         return False
-
-    registered_rows = (
-        _boss_get_registered_users(chat_id)
-        if include_registrations
-        else []
-    )
 
     boss = random.choice(BOSSES)
 
@@ -2881,6 +2913,10 @@ async def _start_boss_battle(
             ]
         ]),
     )
+
+    # There is no await between the atomic take and publishing the live battle.
+    # Registrations committed after this boundary belong to the following one.
+    registered_rows = _boss_consume_registrations(chat_id)
 
     battle = {
         "battle_id": secrets.token_urlsafe(16),
@@ -2978,22 +3014,6 @@ async def boss_reg_command(
 
     chat_id = chat.id
 
-    if not _boss_registration_is_open():
-        await send_and_schedule(
-            update,
-            context,
-            get_text("boss.registration.closed"),
-        )
-        return
-
-    if chat_id in ACTIVE_BOSS_BATTLES:
-        await send_and_schedule(
-            update,
-            context,
-            get_text("boss.registration.active"),
-        )
-        return
-
     # Команда участника также означает, что бот должен считать
     # этот чат активным для ежедневного босса.
     set_boss_enabled(chat_id, True)
@@ -3012,14 +3032,14 @@ async def boss_reg_command(
         await send_and_schedule(
             update,
             context,
-            f'{get_text("boss.registration.registered")}\n\n{participant_count_text}',
+            f'{get_text("boss.registration.next_registered")}\n\n{participant_count_text}',
             parse_mode="HTML",
         )
     else:
         await send_and_schedule(
             update,
             context,
-            f'{get_text("boss.registration.already_registered")}\n\n{participant_count_text}',
+            f'{get_text("boss.registration.next_already_registered")}\n\n{participant_count_text}',
             parse_mode="HTML",
         )
 
@@ -3094,8 +3114,8 @@ async def boss_daily_job(context: ContextTypes.DEFAULT_TYPE):
     """
     Ежедневно запускает битву в 13:37.
 
-    Все пользователи, записавшиеся через /boss_reg до 13:37,
-    автоматически становятся участниками. Остальные могут
+    Пользователи из очереди следующего боя автоматически становятся
+    участниками. Остальные могут
     присоединиться через кнопку в течение окна набора.
     """
     chats = set(get_all_chats())
@@ -3123,7 +3143,6 @@ async def boss_daily_job(context: ContextTypes.DEFAULT_TYPE):
                 chat_id,
                 include_registrations=True,
             ):
-                _boss_clear_registrations(chat_id)
                 started += 1
             else:
                 skipped += 1
@@ -3186,6 +3205,7 @@ async def _boss_join_timer(
                         boss_name=battle["boss"]["name"],
                     ),
                     parse_mode="HTML",
+                    reply_markup=_boss_next_registration_keyboard(),
                 )
             except Exception:
                 pass

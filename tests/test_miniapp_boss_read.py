@@ -86,7 +86,6 @@ async def test_no_boss_read_does_not_create_registration_table_or_write_db(boss_
 
 @pytest.mark.asyncio
 async def test_registration_read_is_chat_scoped_and_does_not_mutate(boss_world, monkeypatch):
-    monkeypatch.setattr(boss_registration, "_boss_today", lambda: "2026-09-25")
     monkeypatch.setattr(boss_registration, "_boss_registration_is_open", lambda: True)
     user_a = SimpleNamespace(id=101, username="same", first_name="A", last_name=None)
     other_a = SimpleNamespace(id=202, username="other", first_name="B", last_name=None)
