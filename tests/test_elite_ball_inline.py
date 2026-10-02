@@ -7,7 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from telegram import InlineQueryResultCachedPhoto, Update
+from telegram import InlineQueryResultArticle, InputMediaPhoto, Update
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler
 
 from database import get_db, init_db
@@ -57,10 +58,12 @@ async def test_inline_preview_and_callback_work_without_ball_charge(fake_context
 
     weather, ball = update.inline_query.answer.await_args.args[0]
     assert weather.id != ball.id
-    assert isinstance(ball, InlineQueryResultCachedPhoto)
-    assert ball.photo_file_id == elite_ball.ELITE_BALL_PHOTO_FILE_ID
-    assert "&lt;чай&gt; &amp;" in ball.caption
-    assert ball.parse_mode == "HTML"
+    assert isinstance(ball, InlineQueryResultArticle)
+    assert ball.title == get_text("elite_ball.button")
+    assert ball.description == get_text("elite_ball.inline_description", question=question)
+    assert ball.thumbnail_url is None  # The earlier Article result had no thumbnail.
+    assert "&lt;чай&gt; &amp;" in ball.input_message_content.message_text
+    assert ball.input_message_content.parse_mode == "HTML"
     button = ball.reply_markup.inline_keyboard[0][0]
     assert button.text == get_text("elite_ball.inline_button")
     assert len(button.callback_data.encode()) <= 64
@@ -74,10 +77,15 @@ async def test_inline_preview_and_callback_work_without_ball_charge(fake_context
     owner_update, owner_query = callback(token)
     await elite_ball.elite_ball_inline_callback(owner_update, fake_context)
     answer_choice.assert_called_once_with(["Да", "Нет", "Возможно", "Увлажните шар гнома усерднее"])
-    assert "Да" in owner_query.edit_message_caption.await_args.kwargs["caption"]
-    assert "&lt;чай&gt;" in owner_query.edit_message_caption.await_args.kwargs["caption"]
-    assert owner_query.edit_message_caption.await_args.kwargs["reply_markup"] is None
-    owner_query.edit_message_media.assert_not_awaited()
+    owner_query.edit_message_media.assert_awaited_once()
+    final_media = owner_query.edit_message_media.await_args.kwargs["media"]
+    assert isinstance(final_media, InputMediaPhoto)
+    assert final_media.media == elite_ball.ELITE_BALL_PHOTO_FILE_ID
+    assert "Да" in final_media.caption
+    assert "&lt;чай&gt;" in final_media.caption
+    assert final_media.parse_mode == "HTML"
+    assert owner_query.edit_message_media.await_args.kwargs["reply_markup"] is None
+    owner_query.edit_message_caption.assert_not_awaited()
     owner_query.edit_message_text.assert_not_awaited()
     assert activations() == []
 
@@ -95,10 +103,12 @@ async def test_owner_uses_inline_action_without_charge_or_destination_chat(fake_
 
     assert activations() == []
     choice.assert_called_once_with(["Да", "Нет", "Возможно", "Увлажните шар гнома усерднее"])
-    kwargs = query.edit_message_caption.await_args.kwargs
-    assert "Мой вопрос?" in kwargs["caption"] and "Да" in kwargs["caption"]
+    kwargs = query.edit_message_media.await_args.kwargs
+    assert isinstance(kwargs["media"], InputMediaPhoto)
+    assert kwargs["media"].media == elite_ball.ELITE_BALL_PHOTO_FILE_ID
+    assert "Мой вопрос?" in kwargs["media"].caption and "Да" in kwargs["media"].caption
     assert kwargs["reply_markup"] is None
-    query.edit_message_media.assert_not_awaited()
+    query.edit_message_caption.assert_not_awaited()
     query.edit_message_text.assert_not_awaited()
     assert update.effective_chat is None
 
@@ -116,7 +126,7 @@ async def test_other_user_cannot_use_card_or_rng(fake_context, monkeypatch):
     await elite_ball.elite_ball_inline_callback(update, fake_context)
 
     assert activations() == [(-100, 1)]
-    query.edit_message_caption.assert_not_awaited()
+    query.edit_message_media.assert_not_awaited()
     query.edit_message_text.assert_not_awaited()
     query.answer.assert_awaited_once_with(
         get_text("elite_ball.inline_not_owner"), show_alert=True,
@@ -126,7 +136,7 @@ async def test_other_user_cannot_use_card_or_rng(fake_context, monkeypatch):
     owner_update, owner_query = callback(token)
     monkeypatch.setattr(elite_ball.random, "choice", Mock(return_value="Да"))
     await elite_ball.elite_ball_inline_callback(owner_update, fake_context)
-    owner_query.edit_message_caption.assert_awaited_once()
+    owner_query.edit_message_media.assert_awaited_once()
     assert activations() == [(-100, 1)]
 
 
@@ -140,7 +150,7 @@ async def test_inline_callback_never_reads_or_consumes_existing_chat_charge(fake
     monkeypatch.setattr(elite_ball.random, "choice", choice)
     update, query = callback(token)
     await elite_ball.elite_ball_inline_callback(update, fake_context)
-    query.edit_message_caption.assert_awaited_once()
+    query.edit_message_media.assert_awaited_once()
     assert activations() == [(-100, 1)]
     choice.assert_called_once()
 
@@ -173,9 +183,7 @@ async def test_chat_and_inline_modes_remain_independent_through_sent_preview(fak
             "chat": {"id": -100, "type": "supergroup"},
             "from": {"id": 1, "is_bot": False, "first_name": "Player"},
             "via_bot": {"id": 99, "is_bot": True, "first_name": "Inline Bot"},
-            "caption": "Элитный мячик знание\nВопрос: хуй будешь?",
-            "photo": [{"file_id": elite_ball.ELITE_BALL_PHOTO_FILE_ID,
-                       "file_unique_id": "ball-photo", "width": 100, "height": 100}],
+            "text": "Элитный мячик знание\nВопрос: хуй будешь?",
         },
     }, None)
     await elite_ball.elite_ball_question(sent, fake_context)
@@ -184,8 +192,8 @@ async def test_chat_and_inline_modes_remain_independent_through_sent_preview(fak
 
     owner_update, query = callback(token)
     await elite_ball.elite_ball_inline_callback(owner_update, fake_context)
-    assert "Да" in query.edit_message_caption.await_args.kwargs["caption"]
-    assert query.edit_message_caption.await_args.kwargs["reply_markup"] is None
+    assert "Да" in query.edit_message_media.await_args.kwargs["media"].caption
+    assert query.edit_message_media.await_args.kwargs["reply_markup"] is None
     assert activations() == [(-100, 1)]
     assert rolls.call_count == 1
 
@@ -218,7 +226,29 @@ async def test_repeat_callback_reuses_answer_without_second_charge_or_rng(fake_c
 
     assert activations() == [(-100, 1), (-200, 1)]
     choice.assert_called_once()
-    assert first_query.edit_message_caption.await_args.kwargs == second_query.edit_message_caption.await_args.kwargs
+    first_media = first_query.edit_message_media.await_args.kwargs["media"]
+    second_media = second_query.edit_message_media.await_args.kwargs["media"]
+    assert first_media.media == second_media.media == elite_ball.ELITE_BALL_PHOTO_FILE_ID
+    assert first_media.caption == second_media.caption
+    assert second_query.edit_message_media.await_args.kwargs["reply_markup"] is None
+
+
+@pytest.mark.asyncio
+async def test_retry_accepts_already_final_photo_without_reroll(fake_context, monkeypatch):
+    from handlers import elite_ball
+
+    token = create_inline_action(1, "Вопрос")
+    choice = Mock(return_value="Да")
+    monkeypatch.setattr(elite_ball.random, "choice", choice)
+    await elite_ball.elite_ball_inline_callback(callback(token)[0], fake_context)
+    retry, query = callback(token)
+    query.edit_message_media.side_effect = BadRequest("Message is not modified")
+
+    await elite_ball.elite_ball_inline_callback(retry, fake_context)
+
+    assert query.edit_message_media.await_args.kwargs["media"].caption.endswith("Ответ: Да")
+    query.answer.assert_awaited_once_with()
+    choice.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -229,7 +259,7 @@ async def test_failed_edit_can_retry_saved_answer_after_restart(fake_context, mo
     choice = Mock(return_value="Да")
     monkeypatch.setattr(elite_ball.random, "choice", choice)
     update, query = callback(token)
-    query.edit_message_caption.side_effect = RuntimeError("Telegram unavailable")
+    query.edit_message_media.side_effect = TelegramError("Telegram unavailable")
 
     await elite_ball.elite_ball_inline_callback(update, fake_context)
     assert activations() == []
@@ -237,7 +267,7 @@ async def test_failed_edit_can_retry_saved_answer_after_restart(fake_context, mo
     retry, retry_query = callback(token)
     await elite_ball.elite_ball_inline_callback(retry, fake_context)
 
-    assert "Да" in retry_query.edit_message_caption.await_args.kwargs["caption"]
+    assert "Да" in retry_query.edit_message_media.await_args.kwargs["media"].caption
     choice.assert_called_once()
 
 
@@ -298,7 +328,7 @@ async def test_expired_and_unknown_callback_are_safe_refusals(fake_context, monk
         query.answer.assert_awaited_once_with(
             get_text("elite_ball.inline_unavailable"), show_alert=True,
         )
-        query.edit_message_caption.assert_not_awaited()
+        query.edit_message_media.assert_not_awaited()
     choice.assert_not_called()
 
 

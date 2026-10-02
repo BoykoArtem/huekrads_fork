@@ -70,7 +70,7 @@ async def test_one_inline_answer_contains_weather_and_elite_ball(
     assert ball_result.id.startswith(f"{ELITE_BALL_INLINE_RESULT_ID}_")
     assert ball_result.title == "Элитный мячик знание"
     assert ball_result.reply_markup.inline_keyboard[0][0].callback_data.startswith("ebi:")
-    assert query in ball_result.caption
+    assert query in ball_result.input_message_content.message_text
     assert charges() == {(CHAT_ID, 1)}
     if forecast is None:
         assert weather_result.title == "Погода: Сделаю?"

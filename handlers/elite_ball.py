@@ -5,8 +5,10 @@ import random
 from html import escape
 
 from telegram import (
-    InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultCachedPhoto, Update,
+    InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle,
+    InputMediaPhoto, InputTextMessageContent, Update,
 )
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from elite_ball_store import (
@@ -33,14 +35,16 @@ def choose_ball_answer() -> str:
     return random.choice(get_text_list("elite_ball.answers"))
 
 
-def build_elite_ball_inline_result(user_id: int, question: str) -> InlineQueryResultCachedPhoto:
+def build_elite_ball_inline_result(user_id: int, question: str) -> InlineQueryResultArticle:
     token = create_inline_action(user_id, question)
-    return InlineQueryResultCachedPhoto(
+    return InlineQueryResultArticle(
         id=f"{ELITE_BALL_INLINE_RESULT_ID}_{token}",
-        photo_file_id=ELITE_BALL_PHOTO_FILE_ID,
         title=get_text("elite_ball.button"),
-        caption=get_text("elite_ball.inline_preview", question=escape(question)),
-        parse_mode="HTML",
+        description=get_text("elite_ball.inline_description", question=question),
+        input_message_content=InputTextMessageContent(
+            get_text("elite_ball.inline_preview", question=escape(question)),
+            parse_mode="HTML",
+        ),
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton(
                 get_text("elite_ball.inline_button"),
@@ -134,10 +138,17 @@ async def elite_ball_inline_callback(update: Update, context: ContextTypes.DEFAU
             question=escape(result.question), answer=escape(result.answer),
         )
         try:
-            await query.edit_message_caption(caption=final, parse_mode="HTML", reply_markup=None)
-        except Exception:
-            if result.status == "used":
-                logging.exception("Could not edit used elite ball inline message")
+            await query.edit_message_media(
+                media=InputMediaPhoto(
+                    media=ELITE_BALL_PHOTO_FILE_ID, caption=final, parse_mode="HTML",
+                ),
+                reply_markup=None,
+            )
+        except BadRequest as exc:
+            if "message is not modified" not in str(exc).lower():
+                logging.exception("Could not edit elite ball inline media")
+        except TelegramError:
+            logging.exception("Could not edit elite ball inline media")
         await query.answer()
         return
     await query.answer(get_text(f"elite_ball.inline_{result.status}"), show_alert=True)

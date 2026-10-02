@@ -1,5 +1,6 @@
 button: Элитный мячик знание
 waiting: "Шар ожидает вопрос:"
+inline_description: "Вопрос: {question}"
 inline_preview: |-
   Элитный мячик знание
   Вопрос: {question}
