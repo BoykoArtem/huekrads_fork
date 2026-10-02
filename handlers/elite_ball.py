@@ -5,8 +5,7 @@ import random
 from html import escape
 
 from telegram import (
-    InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle,
-    InputTextMessageContent, Update,
+    InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultCachedPhoto, Update,
 )
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
@@ -34,15 +33,14 @@ def choose_ball_answer() -> str:
     return random.choice(get_text_list("elite_ball.answers"))
 
 
-def build_elite_ball_inline_result(user_id: int, question: str) -> InlineQueryResultArticle:
+def build_elite_ball_inline_result(user_id: int, question: str) -> InlineQueryResultCachedPhoto:
     token = create_inline_action(user_id, question)
-    return InlineQueryResultArticle(
+    return InlineQueryResultCachedPhoto(
         id=f"{ELITE_BALL_INLINE_RESULT_ID}_{token}",
+        photo_file_id=ELITE_BALL_PHOTO_FILE_ID,
         title=get_text("elite_ball.button"),
-        input_message_content=InputTextMessageContent(
-            get_text("elite_ball.inline_preview", question=escape(question)),
-            parse_mode="HTML",
-        ),
+        caption=get_text("elite_ball.inline_preview", question=escape(question)),
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton(
                 get_text("elite_ball.inline_button"),
@@ -136,7 +134,7 @@ async def elite_ball_inline_callback(update: Update, context: ContextTypes.DEFAU
             question=escape(result.question), answer=escape(result.answer),
         )
         try:
-            await query.edit_message_text(text=final, parse_mode="HTML", reply_markup=None)
+            await query.edit_message_caption(caption=final, parse_mode="HTML", reply_markup=None)
         except Exception:
             if result.status == "used":
                 logging.exception("Could not edit used elite ball inline message")
