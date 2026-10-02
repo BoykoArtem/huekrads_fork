@@ -94,6 +94,7 @@ async def elite_ball_question(update: Update, context: ContextTypes.DEFAULT_TYPE
     if (
         message is None or chat is None or message.from_user is None
         or getattr(message.from_user, "is_bot", False)
+        or getattr(message, "via_bot", None) is not None
         or not isinstance(message.text, str) or not message.text.strip()
         or message.text.lstrip().startswith("/")
     ):

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from telegram import Update
 from telegram.ext import ApplicationHandlerStop, CallbackQueryHandler, MessageHandler
 from text_resources import get_text_list
 
@@ -191,6 +192,54 @@ async def test_other_chat_and_other_users_have_independent_waiting(fake_context,
     with pytest.raises(ApplicationHandlerStop):
         await elite_ball.elite_ball_question(text_update(1, CHAT_ID)[0], fake_context)
     assert charges() == {(-831, 1), (CHAT_ID, 2)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("via_bot_id", (100, 200))
+async def test_via_bot_message_from_any_inline_bot_does_not_consume_chat_charge(
+    fake_context, monkeypatch, via_bot_id,
+):
+    from handlers import elite_ball
+
+    await elite_ball.ball_command(SimpleNamespace(
+        effective_chat=SimpleNamespace(id=CHAT_ID),
+        effective_user=SimpleNamespace(id=1, is_bot=False),
+        message=None,
+    ), fake_context)
+    choice = Mock(return_value="Да")
+    monkeypatch.setattr(elite_ball.random, "choice", choice)
+    inline_message = Update.de_json({
+        "update_id": 10,
+        "message": {
+            "message_id": 72, "date": 1,
+            "chat": {"id": CHAT_ID, "type": "supergroup"},
+            "from": {"id": 1, "is_bot": False, "first_name": "Player"},
+            "via_bot": {"id": via_bot_id, "is_bot": True, "first_name": "Inline Bot"},
+            "text": "Элитный мячик знание\nВопрос: хуй будешь?",
+        },
+    }, None)
+    assert inline_message.message.via_bot.id == via_bot_id
+
+    await elite_ball.elite_ball_question(inline_message, fake_context)
+
+    assert charges() == {(CHAT_ID, 1)}
+    choice.assert_not_called()
+    ordinary, message = text_update()
+    with pytest.raises(ApplicationHandlerStop):
+        await elite_ball.elite_ball_question(ordinary, fake_context)
+    assert charges() == set()
+    choice.assert_called_once_with(list(ANSWERS))
+    message.reply_photo.assert_awaited_once()
+
+
+def test_chat_charge_survives_storage_reinitialization():
+    from database import init_db
+    from elite_ball_store import activate_ball, consume_chat_ball
+
+    activate_ball(CHAT_ID, 1)
+    init_db()
+    assert consume_chat_ball(CHAT_ID, 1)
+    assert charges() == set()
 
 
 @pytest.mark.asyncio

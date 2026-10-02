@@ -86,9 +86,7 @@ async def test_weather_failure_cannot_hide_ball_and_empty_query_stays_empty(
 ):
     from handlers import weather
     from handlers.inline_query import inline_query_dispatch
-    from elite_ball_store import activate_ball
 
-    activate_ball(CHAT_ID, 1)
     monkeypatch.setattr(weather, "_fetch_weather_html", Mock(side_effect=RuntimeError("API down")))
     broken = _inline_update("не город")
     await inline_query_dispatch(broken, fake_context)

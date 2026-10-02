@@ -47,14 +47,6 @@ def consume_chat_ball(chat_id: int, user_id: int) -> bool:
         return cursor.rowcount == 1
 
 
-def has_active_ball(user_id: int) -> bool:
-    with get_db() as conn:
-        return conn.execute(
-            "SELECT 1 FROM elite_ball_activations WHERE user_id = ? LIMIT 1",
-            (user_id,),
-        ).fetchone() is not None
-
-
 def create_inline_action(owner_user_id: int, question: str) -> str:
     token = secrets.token_urlsafe(18)
     now = int(time.time())
@@ -74,7 +66,7 @@ def create_inline_action(owner_user_id: int, question: str) -> str:
 def consume_inline_action(
     token: str, user_id: int, choose_answer: Callable[[], str],
 ) -> BallActionResult:
-    """Serialize competing callbacks; persist charge consumption and answer together."""
+    """Serialize callbacks and persist one answer for each inline action."""
     if not token or len(token) > 48 or not token.isascii() or not all(
         c.isalnum() or c in "-_" for c in token
     ):
@@ -96,15 +88,7 @@ def consume_inline_action(
             return BallActionResult("already_used", question, answer)
         if expires_at <= int(time.time()):
             return BallActionResult("unavailable")
-        activation = cursor.execute(
-            """SELECT id FROM elite_ball_activations
-               WHERE user_id = ? ORDER BY id LIMIT 1""",
-            (user_id,),
-        ).fetchone()
-        if activation is None:
-            return BallActionResult("no_charge")
         answer = choose_answer()
-        cursor.execute("DELETE FROM elite_ball_activations WHERE id = ?", activation)
         cursor.execute(
             """UPDATE elite_ball_inline_actions SET consumed_at = ?, answer = ?
                WHERE token_digest = ?""",
