@@ -6,18 +6,28 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const app = fs.readFileSync(path.join(__dirname, "..", "miniapp_static", "app.js"), "utf8");
+const html = fs.readFileSync(path.join(__dirname, "..", "miniapp_static", "index.html"), "utf8");
+const telegramScript = html.match(/<script src="https:\/\/telegram\.org\/js\/telegram-web-app\.js"[\s\S]*?<\/script>/);
+assert.ok(telegramScript);
+assert.ok(html.indexOf(telegramScript[0]) < html.indexOf('src="/static/app.js" defer'));
+const eventHandlers = {
+  load: telegramScript[0].match(/onload="([^"]+)"/)[1],
+  error: telegramScript[0].match(/onerror="([^"]+)"/)[1],
+};
 const match = app.match(/  async function bootstrap\(\) \{[\s\S]*?\n  \}\n\n  bootstrap\(\);/);
 assert.ok(match);
 const bootstrapSource = match[0].replace(/\n\n  bootstrap\(\);$/, "\n  globalThis.runBootstrap = bootstrap;");
 
-async function scenario({ webApp, search = "", apiResult, homeError = false }) {
+async function scenario({ webApp, scriptEvent = null, search = "", apiResult, homeError = false }) {
   const events = [];
   const messages = [];
   const calls = [];
+  const telegramWindow = { Telegram: webApp === undefined ? undefined : { WebApp: webApp },
+    location: { search } };
+  if (scriptEvent) vm.runInNewContext(eventHandlers[scriptEvent], { window: telegramWindow });
   const sandbox = {
     URLSearchParams,
-    window: { Telegram: webApp === undefined ? undefined : { WebApp: webApp },
-      location: { search } },
+    window: telegramWindow,
     console: { warn: (...values) => events.push(values) },
     showUnavailable: (message, code) => messages.push({ message, code }),
     apiRequest: async (_path, options) => {
@@ -40,8 +50,16 @@ async function scenario({ webApp, search = "", apiResult, homeError = false }) {
   assert.equal(absent.events[0][1].reason, "missing_init_data");
   assert.equal(absent.events[0][1].has_web_app, false);
   assert.equal(absent.calls.length, 0);
-  assert.equal(absent.messages[0].code, "DBG: NO_WEBAPP");
+  assert.equal(absent.messages[0].code, "DBG: TG_SCRIPT_UNKNOWN_NO_WEBAPP");
   assert.ok(absent.messages[0].message.includes("/duel_app"));
+
+  const failedScript = await scenario({ scriptEvent: "error" });
+  assert.equal(failedScript.messages[0].code, "DBG: TG_SCRIPT_ERROR");
+  assert.equal(failedScript.calls.length, 0);
+
+  const loadedWithoutWebApp = await scenario({ scriptEvent: "load" });
+  assert.equal(loadedWithoutWebApp.messages[0].code, "DBG: TG_SCRIPT_LOADED_NO_WEBAPP");
+  assert.equal(loadedWithoutWebApp.calls.length, 0);
 
   const empty = await scenario({ webApp: { initData: "", initDataUnsafe: {
     start_param: "SECRET_UNSAFE_START",

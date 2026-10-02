@@ -947,6 +947,7 @@
 
   async function bootstrap() {
     const webApp = window.Telegram?.WebApp;
+    const scriptStatus = window.__telegramWebAppScriptStatus;
     const hasUnsafeStartParam = Boolean(webApp?.initDataUnsafe?.start_param);
     const queryStartParam = new URLSearchParams(window.location.search).get("tgWebAppStartParam");
     if (!webApp || !webApp.initData) {
@@ -957,7 +958,10 @@
         has_query_start_param: Boolean(queryStartParam),
       });
       showUnavailable("Откройте приложение через кнопку /duel_app в игровом чате Telegram.",
-        webApp ? "DBG: EMPTY_INIT_DATA" : "DBG: NO_WEBAPP");
+        webApp ? "DBG: EMPTY_INIT_DATA" :
+          scriptStatus === "error" ? "DBG: TG_SCRIPT_ERROR" :
+            scriptStatus === "loaded" ? "DBG: TG_SCRIPT_LOADED_NO_WEBAPP" :
+              "DBG: TG_SCRIPT_UNKNOWN_NO_WEBAPP");
       return;
     }
     webApp.ready();
