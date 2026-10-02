@@ -373,7 +373,10 @@ def test_frontend_has_only_session_duel_and_boss_posts():
 
 def test_bootstrap_console_diagnostics_keep_credentials_out_of_messages():
     js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
     bootstrap = js[js.index("  async function bootstrap() {"):]
+    assert 'unavailable.append(element("small", "bootstrap-debug-code", diagnosticCode))' in js
+    assert '.bootstrap-debug-code { display: block;' in css
     assert 'webApp?.initDataUnsafe?.start_param' in bootstrap
     assert 'get("tgWebAppStartParam")' in bootstrap
     assert 'const launchToken = initDataStartParam || queryStartParam;' in bootstrap
@@ -383,6 +386,8 @@ def test_bootstrap_console_diagnostics_keep_credentials_out_of_messages():
     assert 'stage === "session_request" ? "session_api_error"' in bootstrap
     assert 'stage === "session_response" ? "invalid_session_response" : "post_session_load_error"' in bootstrap
     assert 'status: Number.isInteger(error?.status) ? error.status : null' in bootstrap
+    for code in ("NO_WEBAPP", "EMPTY_INIT_DATA", "NO_START_PARAM", "SESSION_HTTP_"):
+        assert f"DBG: {code}" in bootstrap
     for statement in re.findall(r'console\.warn\("miniapp_bootstrap", \{(.*?)\}\);',
                                 bootstrap, re.S):
         assert "launchToken" not in statement

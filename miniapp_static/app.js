@@ -75,7 +75,7 @@
     }
   }
 
-  function showUnavailable(message) {
+  function showUnavailable(message, diagnosticCode = null) {
     sessionToken = null;
     activeDuel = null;
     bossSnapshot = null;
@@ -86,8 +86,10 @@
     inspectedPlayerSource = null;
     for (const view of Object.keys(API_PATHS)) {
       clearViewStatus(view);
+      const unavailable = notice(message, true);
+      if (diagnosticCode) unavailable.append(element("small", "bootstrap-debug-code", diagnosticCode));
       document.getElementById(`screen-${view}`).querySelector(".panel-body").replaceChildren(
-        notice(message, true)
+        unavailable
       );
     }
   }
@@ -954,7 +956,8 @@
         has_unsafe_start_param: hasUnsafeStartParam,
         has_query_start_param: Boolean(queryStartParam),
       });
-      showUnavailable("Откройте приложение через кнопку /duel_app в игровом чате Telegram.");
+      showUnavailable("Откройте приложение через кнопку /duel_app в игровом чате Telegram.",
+        webApp ? "DBG: EMPTY_INIT_DATA" : "DBG: NO_WEBAPP");
       return;
     }
     webApp.ready();
@@ -968,7 +971,8 @@
         has_unsafe_start_param: hasUnsafeStartParam,
         has_query_start_param: Boolean(queryStartParam),
       });
-      showUnavailable("Нужна ссылка из игрового чата. Вызовите там /duel_app ещё раз.");
+      showUnavailable("Нужна ссылка из игрового чата. Вызовите там /duel_app ещё раз.",
+        "DBG: NO_START_PARAM");
       return;
     }
     let stage = "session_request";
@@ -988,7 +992,10 @@
         status: Number.isInteger(error?.status) ? error.status : null,
         has_init_data: true, has_launch_token: true,
       });
-      showUnavailable("Ссылка уже использована или устарела. Вернитесь в чат и вызовите /duel_app ещё раз.");
+      showUnavailable("Ссылка уже использована или устарела. Вернитесь в чат и вызовите /duel_app ещё раз.",
+        stage === "session_request" ?
+          Number.isInteger(error?.status) ? `DBG: SESSION_HTTP_${error.status}` :
+            "DBG: SESSION_REQUEST_ERROR" : null);
     }
   }
 

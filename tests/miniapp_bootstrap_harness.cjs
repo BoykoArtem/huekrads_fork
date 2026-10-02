@@ -19,7 +19,7 @@ async function scenario({ webApp, search = "", apiResult, homeError = false }) {
     window: { Telegram: webApp === undefined ? undefined : { WebApp: webApp },
       location: { search } },
     console: { warn: (...values) => events.push(values) },
-    showUnavailable: message => messages.push(message),
+    showUnavailable: (message, code) => messages.push({ message, code }),
     apiRequest: async (_path, options) => {
       calls.push(options.body);
       if (apiResult instanceof Error) throw apiResult;
@@ -40,6 +40,8 @@ async function scenario({ webApp, search = "", apiResult, homeError = false }) {
   assert.equal(absent.events[0][1].reason, "missing_init_data");
   assert.equal(absent.events[0][1].has_web_app, false);
   assert.equal(absent.calls.length, 0);
+  assert.equal(absent.messages[0].code, "DBG: NO_WEBAPP");
+  assert.ok(absent.messages[0].message.includes("/duel_app"));
 
   const empty = await scenario({ webApp: { initData: "", initDataUnsafe: {
     start_param: "SECRET_UNSAFE_START",
@@ -48,6 +50,7 @@ async function scenario({ webApp, search = "", apiResult, homeError = false }) {
   assert.equal(empty.events[0][1].has_web_app, true);
   assert.equal(empty.events[0][1].has_unsafe_start_param, true);
   assert.equal(empty.calls.length, 0);
+  assert.equal(empty.messages[0].code, "DBG: EMPTY_INIT_DATA");
 
   const unsafeOnly = await scenario({ webApp: { initData: "auth_date=123",
     initDataUnsafe: { start_param: "SECRET_UNSAFE_START" }, ready() {}, expand() {},
@@ -55,6 +58,7 @@ async function scenario({ webApp, search = "", apiResult, homeError = false }) {
   assert.equal(unsafeOnly.events[0][1].reason, "missing_launch_token");
   assert.equal(unsafeOnly.events[0][1].has_unsafe_start_param, true);
   assert.equal(unsafeOnly.calls.length, 0);
+  assert.equal(unsafeOnly.messages[0].code, "DBG: NO_START_PARAM");
 
   const apiError = Object.assign(new Error("SECRET_SERVER_MESSAGE"), { status: 401 });
   const rejected = await scenario({ webApp: { initData: "auth_date=123",
@@ -64,12 +68,15 @@ async function scenario({ webApp, search = "", apiResult, homeError = false }) {
   assert.equal(rejected.events[0][1].reason, "session_api_error");
   assert.equal(rejected.events[0][1].status, 401);
   assert.equal(rejected.messages.length, 1);
+  assert.equal(rejected.messages[0].code, "DBG: SESSION_HTTP_401");
   assert.ok(!JSON.stringify(rejected.events).includes("SECRET_"));
+  assert.ok(!JSON.stringify(rejected.messages).includes("SECRET_"));
 
   const home = await scenario({ webApp: { initData: "start_param=SECRET_INIT_TOKEN",
     ready() {}, expand() {},
   }, apiResult: { session_token: "SECRET_SESSION_TOKEN" }, homeError: true });
   assert.equal(home.calls[0].launch_token, "SECRET_INIT_TOKEN");
   assert.equal(home.events[0][1].reason, "post_session_load_error");
+  assert.equal(home.messages[0].code, null);
   assert.ok(!JSON.stringify(home.events).includes("SECRET_"));
 })().catch(error => { console.error(error); process.exitCode = 1; });
