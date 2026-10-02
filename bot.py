@@ -98,7 +98,10 @@ from handlers.duel_name import name_command
 from handlers.miniapp import duel_app_command
 from miniapp_api import create_miniapp_api
 from handlers.monthly_summary import monthly_summary_job, summary_command
-from handlers.elite_ball import ball_command, elite_ball_callback, elite_ball_question, ELITE_BALL_CALLBACK_DATA
+from handlers.elite_ball import (
+    ball_command, elite_ball_callback, elite_ball_inline_callback,
+    elite_ball_question, ELITE_BALL_CALLBACK_DATA, ELITE_BALL_INLINE_CALLBACK_PREFIX,
+)
 from handlers.dig import dig_command
 from handlers.modules import modules_command, modules_callback
 from handlers.huecrab import (
@@ -379,6 +382,12 @@ async def main():
         CallbackQueryHandler(
             elite_ball_callback,
             pattern=rf"^{ELITE_BALL_CALLBACK_DATA}$",
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            elite_ball_inline_callback,
+            pattern=rf"^{ELITE_BALL_INLINE_CALLBACK_PREFIX}[A-Za-z0-9_-]{{24}}$",
         )
     )
 

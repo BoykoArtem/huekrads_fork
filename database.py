@@ -470,6 +470,35 @@ def init_db():
             ON miniapp_sessions (expires_at)
         """)
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS elite_ball_activations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE (chat_id, user_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_elite_ball_activations_oldest
+            ON elite_ball_activations (user_id, id)
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS elite_ball_inline_actions (
+                token_digest TEXT PRIMARY KEY,
+                owner_user_id INTEGER NOT NULL,
+                question TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                consumed_at INTEGER,
+                answer TEXT,
+                CHECK (expires_at > created_at)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_elite_ball_inline_actions_expiry
+            ON elite_ball_inline_actions (expires_at)
+        """)
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS boss_battle_results (
                 chat_id INTEGER NOT NULL,
                 battle_id TEXT NOT NULL,

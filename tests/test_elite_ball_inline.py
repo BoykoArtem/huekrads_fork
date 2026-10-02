@@ -1,0 +1,272 @@
+"""Inline Elite Ball ownership, ordering, persistence, and one-shot use."""
+
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Lock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+from telegram.ext import CallbackQueryHandler
+
+from database import get_db, init_db
+from elite_ball_store import (
+    activate_ball, consume_inline_action, create_inline_action, has_active_ball,
+)
+from text_resources import get_text
+
+
+pytestmark = pytest.mark.usefixtures("temp_database")
+
+
+def activations():
+    with get_db() as conn:
+        return list(conn.execute(
+            "SELECT chat_id, user_id FROM elite_ball_activations ORDER BY id"
+        ))
+
+
+def callback(token, user_id=1):
+    query = SimpleNamespace(
+        data=f"ebi:{token}",
+        from_user=SimpleNamespace(id=user_id, is_bot=False),
+        inline_message_id="inline-message-id",
+        edit_message_text=AsyncMock(),
+        answer=AsyncMock(),
+    )
+    return SimpleNamespace(callback_query=query, effective_chat=None), query
+
+
+@pytest.mark.asyncio
+async def test_inline_preview_keeps_charge_and_rng_and_escapes_question(fake_context, monkeypatch):
+    from handlers import elite_ball
+    from handlers.inline_query import inline_query_dispatch
+
+    activate_ball(-100, 1)
+    choice = Mock(side_effect=AssertionError("preview used ball RNG"))
+    monkeypatch.setattr(elite_ball.random, "choice", choice)
+    question = "Пить <чай> & спать?"
+    update = SimpleNamespace(inline_query=SimpleNamespace(
+        query=question, from_user=SimpleNamespace(id=1, is_bot=False),
+        answer=AsyncMock(),
+    ), effective_chat=None)
+
+    await inline_query_dispatch(update, fake_context)
+
+    weather, ball = update.inline_query.answer.await_args.args[0]
+    assert weather.id != ball.id
+    assert "&lt;чай&gt; &amp;" in ball.input_message_content.message_text
+    button = ball.reply_markup.inline_keyboard[0][0]
+    assert button.text == get_text("elite_ball.inline_button")
+    assert len(button.callback_data.encode()) <= 64
+    assert question not in button.callback_data
+    assert activations() == [(-100, 1)]
+    choice.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_owner_uses_oldest_charge_without_destination_chat(fake_context, monkeypatch):
+    from handlers import elite_ball
+
+    activate_ball(-100, 1)
+    activate_ball(-200, 1)
+    activate_ball(-100, 1)  # Repeated /ball does not make this charge newer.
+    token = create_inline_action(1, "Мой вопрос?")
+    choice = Mock(return_value="Да")
+    monkeypatch.setattr(elite_ball.random, "choice", choice)
+    update, query = callback(token)
+
+    await elite_ball.elite_ball_inline_callback(update, fake_context)
+
+    assert activations() == [(-200, 1)]
+    choice.assert_called_once_with(["Да", "Нет", "Возможно", "Увлажните шар гнома усерднее"])
+    kwargs = query.edit_message_text.await_args.kwargs
+    assert "Мой вопрос?" in kwargs["text"] and "Да" in kwargs["text"]
+    assert kwargs["reply_markup"] is None
+    assert update.effective_chat is None
+
+    # An ordinary question still consumes only its own chat-scoped charge.
+    assert has_active_ball(1)
+    from elite_ball_store import consume_chat_ball
+    assert not consume_chat_ball(-100, 1)
+    assert consume_chat_ball(-200, 1)
+
+
+@pytest.mark.asyncio
+async def test_other_user_cannot_use_card_or_rng(fake_context, monkeypatch):
+    from handlers import elite_ball
+
+    activate_ball(-100, 1)
+    token = create_inline_action(1, "Вопрос")
+    choice = Mock(side_effect=AssertionError("foreign callback used RNG"))
+    monkeypatch.setattr(elite_ball.random, "choice", choice)
+    update, query = callback(token, user_id=2)
+
+    await elite_ball.elite_ball_inline_callback(update, fake_context)
+
+    assert activations() == [(-100, 1)]
+    query.edit_message_text.assert_not_awaited()
+    query.answer.assert_awaited_once_with(
+        get_text("elite_ball.inline_not_owner"), show_alert=True,
+    )
+    choice.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_no_charge_then_activate_and_use_same_card(fake_context, monkeypatch):
+    from handlers import elite_ball
+
+    token = create_inline_action(1, "Вопрос")
+    choice = Mock(return_value="Нет")
+    monkeypatch.setattr(elite_ball.random, "choice", choice)
+    update, query = callback(token)
+    await elite_ball.elite_ball_inline_callback(update, fake_context)
+    query.answer.assert_awaited_once_with(
+        get_text("elite_ball.inline_no_charge"), show_alert=True,
+    )
+    query.edit_message_text.assert_not_awaited()
+    choice.assert_not_called()
+
+    activate_ball(-100, 1)
+    await elite_ball.elite_ball_inline_callback(update, fake_context)
+    assert activations() == []
+    choice.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_repeat_callback_reuses_answer_without_second_charge_or_rng(fake_context, monkeypatch):
+    from handlers import elite_ball
+
+    activate_ball(-100, 1)
+    activate_ball(-200, 1)
+    token = create_inline_action(1, "Вопрос")
+    choice = Mock(return_value="Да")
+    monkeypatch.setattr(elite_ball.random, "choice", choice)
+    first, first_query = callback(token)
+    second, second_query = callback(token)
+
+    await elite_ball.elite_ball_inline_callback(first, fake_context)
+    await elite_ball.elite_ball_inline_callback(second, fake_context)
+
+    assert activations() == [(-200, 1)]
+    choice.assert_called_once()
+    assert first_query.edit_message_text.await_args.kwargs == second_query.edit_message_text.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_failed_edit_can_retry_saved_answer_after_restart(fake_context, monkeypatch):
+    from handlers import elite_ball
+
+    activate_ball(-100, 1)
+    token = create_inline_action(1, "Вопрос")
+    choice = Mock(return_value="Да")
+    monkeypatch.setattr(elite_ball.random, "choice", choice)
+    update, query = callback(token)
+    query.edit_message_text.side_effect = RuntimeError("Telegram unavailable")
+
+    await elite_ball.elite_ball_inline_callback(update, fake_context)
+    assert activations() == []
+    init_db()  # A new process can read the persisted action and answer.
+    retry, retry_query = callback(token)
+    await elite_ball.elite_ball_inline_callback(retry, fake_context)
+
+    assert "Да" in retry_query.edit_message_text.await_args.kwargs["text"]
+    choice.assert_called_once()
+
+
+def test_concurrent_callbacks_consume_once_and_save_same_answer():
+    activate_ball(-100, 1)
+    activate_ball(-200, 1)
+    token = create_inline_action(1, "Вопрос")
+    gate = Barrier(2)
+    guard = Lock()
+    calls = []
+
+    def choose():
+        with guard:
+            calls.append(1)
+        return "Да"
+
+    def run():
+        gate.wait()
+        return consume_inline_action(token, 1, choose)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(run) for _ in range(2)]
+        results = [future.result() for future in futures]
+
+    assert {result.status for result in results} == {"used", "already_used"}
+    assert all(result.answer == "Да" for result in results)
+    assert len(calls) == 1
+    assert activations() == [(-200, 1)]
+
+
+@pytest.mark.asyncio
+async def test_empty_and_unowned_queries_keep_weather_flow(fake_context, monkeypatch):
+    from handlers import weather
+    from handlers.inline_query import inline_query_dispatch
+
+    monkeypatch.setattr(weather, "_fetch_weather_html", Mock(return_value=None))
+    query = SimpleNamespace(query="Погода", from_user=SimpleNamespace(id=7, is_bot=False), answer=AsyncMock())
+    await inline_query_dispatch(SimpleNamespace(inline_query=query), fake_context)
+    assert len(query.answer.await_args.args[0]) == 1
+    assert query.answer.await_args.args[0][0].title.startswith("Погода")
+
+    empty = SimpleNamespace(query=" ", from_user=query.from_user, answer=AsyncMock())
+    await inline_query_dispatch(SimpleNamespace(inline_query=empty), fake_context)
+    empty.answer.assert_awaited_once_with([], cache_time=1, is_personal=True)
+
+
+def test_migration_is_additive_and_idempotent():
+    activate_ball(-100, 1)
+    with get_db() as conn:
+        conn.execute("CREATE TABLE legacy_data (value TEXT)")
+        conn.execute("INSERT INTO legacy_data VALUES ('keep')")
+    init_db()
+    init_db()
+    with get_db() as conn:
+        assert conn.execute("SELECT value FROM legacy_data").fetchone() == ("keep",)
+    assert activations() == [(-100, 1)]
+
+
+@pytest.mark.asyncio
+async def test_inline_callback_handler_registered_once_and_narrow(monkeypatch):
+    import bot
+
+    handlers = []
+
+    class FakeApplication:
+        job_queue = None
+
+        def add_handler(self, handler, group=0):
+            handlers.append((group, handler))
+
+        def add_error_handler(self, _handler):
+            pass
+
+    class FakeBuilder:
+        def token(self, _token):
+            return self
+
+        def post_init(self, _callback):
+            return self
+
+        def build(self):
+            return FakeApplication()
+
+    monkeypatch.setattr(bot, "run_ptb_and_http", AsyncMock())
+    monkeypatch.setattr(bot, "init_db", lambda: None)
+    monkeypatch.setattr(bot.Application, "builder", lambda: FakeBuilder())
+    await bot.main()
+    callbacks = [handler for _, handler in handlers
+                 if isinstance(handler, CallbackQueryHandler)
+                 and handler.callback is bot.elite_ball_inline_callback]
+    assert len(callbacks) == 1
+    assert callbacks[0].pattern.pattern == r"^ebi:[A-Za-z0-9_-]{24}$"
+    assert not callbacks[0].pattern.match("elite_ball_ask")
+    assert not callbacks[0].pattern.match("duel_strike_1")
+
+
+def test_new_presentation_is_loaded_from_yaml():
+    assert get_text("elite_ball.inline_button") == "Получить ответ"
+    assert "{question}" not in get_text("elite_ball.inline_preview", question="Вопрос")
+    assert "Да" in get_text("elite_ball.inline_final", question="Вопрос", answer="Да")

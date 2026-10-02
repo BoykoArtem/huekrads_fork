@@ -9,6 +9,16 @@ from text_resources import get_text_list
 
 
 CHAT_ID = -830
+pytestmark = pytest.mark.usefixtures("temp_database")
+
+
+def charges():
+    from database import get_db
+
+    with get_db() as conn:
+        return set(conn.execute("SELECT chat_id, user_id FROM elite_ball_activations"))
+
+
 ANSWERS = ("Да", "Нет", "Возможно", "Увлажните шар гнома усерднее")
 
 
@@ -74,13 +84,13 @@ async def test_click_waits_for_exact_user_and_chat_without_rng(fake_context, mon
     fake_context.bot.send_message.assert_awaited_once_with(
         chat_id=CHAT_ID, text="Шар ожидает вопрос:",
     )
-    assert fake_context.bot_data["elite_ball_waiting"] == {(CHAT_ID, 1)}
+    assert charges() == {(CHAT_ID, 1)}
     choice.assert_not_called()
 
     other_update, other_message = text_update(user_id=2)
     await elite_ball.elite_ball_question(other_update, fake_context)
     other_message.reply_photo.assert_not_awaited()
-    assert fake_context.bot_data["elite_ball_waiting"] == {(CHAT_ID, 1)}
+    assert charges() == {(CHAT_ID, 1)}
     choice.assert_not_called()
 
 
@@ -102,7 +112,7 @@ async def test_one_question_one_choice_reply_and_then_no_waiting(fake_context, m
         reply_to_message_id=71,
     )
     message.reply_text.assert_not_awaited()
-    assert fake_context.bot_data["elite_ball_waiting"] == set()
+    assert charges() == set()
 
     next_update, next_message = text_update(text="Ещё вопрос")
     await elite_ball.elite_ball_question(next_update, fake_context)
@@ -134,7 +144,7 @@ async def test_each_answer_is_possible_with_one_uniform_choice(
     )
     message.reply_text.assert_not_awaited()
     assert fake_context.job_queue.calls == []
-    assert fake_context.bot_data["elite_ball_waiting"] == set()
+    assert charges() == set()
 
 
 @pytest.mark.asyncio
@@ -162,7 +172,7 @@ async def test_photo_send_failure_consumes_question_without_reroll(
         reply_to_message_id=71,
     )
     message.reply_text.assert_not_awaited()
-    assert fake_context.bot_data["elite_ball_waiting"] == set()
+    assert charges() == set()
     assert "Could not send elite ball answer" in caplog.text
     await elite_ball.elite_ball_question(text_update()[0], fake_context)
     choice.assert_called_once()
@@ -174,13 +184,13 @@ async def test_other_chat_and_other_users_have_independent_waiting(fake_context,
 
     for user_id, chat_id in ((1, CHAT_ID), (1, -831), (2, CHAT_ID)):
         await elite_ball.elite_ball_callback(callback_update(user_id, chat_id)[0], fake_context)
-    assert fake_context.bot_data["elite_ball_waiting"] == {
+    assert charges() == {
         (CHAT_ID, 1), (-831, 1), (CHAT_ID, 2),
     }
     monkeypatch.setattr(elite_ball.random, "choice", Mock(return_value="Нет"))
     with pytest.raises(ApplicationHandlerStop):
         await elite_ball.elite_ball_question(text_update(1, CHAT_ID)[0], fake_context)
-    assert fake_context.bot_data["elite_ball_waiting"] == {(-831, 1), (CHAT_ID, 2)}
+    assert charges() == {(-831, 1), (CHAT_ID, 2)}
 
 
 @pytest.mark.asyncio
@@ -192,14 +202,14 @@ async def test_commands_nontext_bot_message_and_repeated_click_do_not_consume(
     update, _ = callback_update()
     await elite_ball.elite_ball_callback(update, fake_context)
     await elite_ball.elite_ball_callback(update, fake_context)
-    assert fake_context.bot_data["elite_ball_waiting"] == {(CHAT_ID, 1)}
+    assert charges() == {(CHAT_ID, 1)}
     choice = Mock(side_effect=AssertionError("ineligible message used RNG"))
     monkeypatch.setattr(elite_ball.random, "choice", choice)
     for text, is_bot in (("/summary", False), (" /name Гном", False), (None, False), ("текст", True)):
         question, message = text_update(text=text, is_bot=is_bot)
         await elite_ball.elite_ball_question(question, fake_context)
         message.reply_photo.assert_not_awaited()
-    assert fake_context.bot_data["elite_ball_waiting"] == {(CHAT_ID, 1)}
+    assert charges() == {(CHAT_ID, 1)}
     choice.assert_not_called()
 
     answer_choice = Mock(return_value="Возможно")
@@ -212,7 +222,7 @@ async def test_commands_nontext_bot_message_and_repeated_click_do_not_consume(
         caption="Возможно",
         reply_to_message_id=71,
     )
-    assert fake_context.bot_data["elite_ball_waiting"] == set()
+    assert charges() == set()
     await elite_ball.elite_ball_question(text_update()[0], fake_context)
     answer_choice.assert_called_once()
 
