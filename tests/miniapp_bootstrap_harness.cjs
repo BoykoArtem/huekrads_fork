@@ -7,7 +7,7 @@ const vm = require("node:vm");
 
 const app = fs.readFileSync(path.join(__dirname, "..", "miniapp_static", "app.js"), "utf8");
 const html = fs.readFileSync(path.join(__dirname, "..", "miniapp_static", "index.html"), "utf8");
-const telegramScript = html.match(/<script src="https:\/\/telegram\.org\/js\/telegram-web-app\.js"[\s\S]*?<\/script>/);
+const telegramScript = html.match(/<script src="\/static\/vendor\/telegram-web-app\.js"[\s\S]*?<\/script>/);
 assert.ok(telegramScript);
 assert.ok(html.indexOf(telegramScript[0]) < html.indexOf('src="/static/app.js" defer'));
 const eventHandlers = {

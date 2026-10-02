@@ -663,6 +663,10 @@ def create_miniapp_api(*, bot_token: str | None = None,
             'src="/static/app.js"', f'src="{_versioned_static_url("app.js")}"',
         )
         html = html.replace(
+            'src="/static/vendor/telegram-web-app.js"',
+            f'src="{_versioned_static_url("vendor/telegram-web-app.js")}"',
+        )
+        html = html.replace(
             'data-gnome-src="/media/gnome"', f'data-gnome-src="{_GNOME_IMAGE_URL}"',
         )
         return HTMLResponse(html)

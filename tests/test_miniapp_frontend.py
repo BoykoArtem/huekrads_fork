@@ -164,16 +164,30 @@ async def test_frontend_routes_and_api_auth_are_served_without_route_conflicts(t
             assert response.headers["x-content-type-options"] == "nosniff"
             css_url = re.search(r'href="(/static/app\.css\?v=[0-9a-f]{64})"', response.text).group(1)
             js_url = re.search(r'src="(/static/app\.js\?v=[0-9a-f]{64})"', response.text).group(1)
+            vendor_url = re.search(
+                r'src="(/static/vendor/telegram-web-app\.js\?v=[0-9a-f]{64})"',
+                response.text,
+            ).group(1)
             assert css_url == "/static/app.css?v=" + hashlib.sha256(
                 (STATIC_DIR / "app.css").read_bytes(),
             ).hexdigest()
             assert js_url == "/static/app.js?v=" + hashlib.sha256(
                 (STATIC_DIR / "app.js").read_bytes(),
             ).hexdigest()
-            assert 'src="https://telegram.org/js/telegram-web-app.js"' in response.text
+            assert vendor_url == "/static/vendor/telegram-web-app.js?v=" + hashlib.sha256(
+                (STATIC_DIR / "vendor" / "telegram-web-app.js").read_bytes(),
+            ).hexdigest()
+            assert 'src="https://telegram.org/js/telegram-web-app.js"' not in response.text
+            assert re.findall(r'<script\b[^>]*\bsrc="([^"]+)"', response.text) == [
+                vendor_url, js_url,
+            ]
         css = await client.get(css_url)
         js = await client.get(js_url)
+        vendor = await client.get(vendor_url)
         assert css.status_code == js.status_code == 200
+        assert vendor.status_code == 200
+        assert vendor.content == (STATIC_DIR / "vendor" / "telegram-web-app.js").read_bytes()
+        assert "javascript" in vendor.headers["content-type"]
         assert "text/css" in css.headers["content-type"]
         assert "javascript" in js.headers["content-type"]
         assert ".game-shell" in css.text
@@ -256,6 +270,10 @@ async def test_gnome_media_failure_never_exposes_bot_token():
 async def test_asset_content_change_rotates_app_urls_without_release_constant(tmp_path, monkeypatch):
     for name in ("index.html", "app.css", "app.js"):
         (tmp_path / name).write_bytes((STATIC_DIR / name).read_bytes())
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "telegram-web-app.js").write_bytes(
+        (STATIC_DIR / "vendor" / "telegram-web-app.js").read_bytes(),
+    )
     monkeypatch.setattr(miniapp_api, "_STATIC_DIR", tmp_path)
     app = create_miniapp_api(bot_token=TEST_BOT_TOKEN, allowed_origin="")
 
@@ -263,24 +281,34 @@ async def test_asset_content_change_rotates_app_urls_without_release_constant(tm
         return (
             re.search(r'href="(/static/app\.css\?v=[0-9a-f]{64})"', html).group(1),
             re.search(r'src="(/static/app\.js\?v=[0-9a-f]{64})"', html).group(1),
+            re.search(r'src="(/static/vendor/telegram-web-app\.js\?v=[0-9a-f]{64})"',
+                      html).group(1),
         )
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                  base_url="http://test") as client:
         initial = await client.get("/app")
-        old_css, old_js = urls(initial.text)
+        old_css, old_js, old_vendor = urls(initial.text)
         (tmp_path / "app.js").write_bytes((tmp_path / "app.js").read_bytes() + b"\n// new build\n")
         changed_js = await client.get("/app")
-        css_after_js, new_js = urls(changed_js.text)
-        assert css_after_js == old_css and new_js != old_js
+        css_after_js, new_js, vendor_after_js = urls(changed_js.text)
+        assert css_after_js == old_css and new_js != old_js and vendor_after_js == old_vendor
         assert new_js.endswith(hashlib.sha256((tmp_path / "app.js").read_bytes()).hexdigest())
         assert (await client.get(new_js)).status_code == 200
         (tmp_path / "app.css").write_bytes((tmp_path / "app.css").read_bytes() + b"\n/* new build */\n")
         changed_css = await client.get("/app")
-        new_css, js_after_css = urls(changed_css.text)
-        assert new_css != old_css and js_after_css == new_js
+        new_css, js_after_css, vendor_after_css = urls(changed_css.text)
+        assert new_css != old_css and js_after_css == new_js and vendor_after_css == old_vendor
         assert (await client.get(new_css)).status_code == 200
-        for response in (initial, changed_js, changed_css):
+        vendor_copy = tmp_path / "vendor" / "telegram-web-app.js"
+        vendor_copy.write_bytes(vendor_copy.read_bytes() + b"\n// test version\n")
+        changed_vendor = await client.get("/app")
+        css_after_vendor, js_after_vendor, new_vendor = urls(changed_vendor.text)
+        assert (css_after_vendor, js_after_vendor) == (new_css, new_js)
+        assert new_vendor != old_vendor
+        assert new_vendor.endswith(hashlib.sha256(vendor_copy.read_bytes()).hexdigest())
+        assert (await client.get(new_vendor)).status_code == 200
+        for response in (initial, changed_js, changed_css, changed_vendor):
             assert response.headers["cache-control"] == "no-store"
 
 
@@ -307,7 +335,8 @@ def test_frontend_has_only_session_duel_and_boss_posts():
     }
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
-    assert 'src="https://telegram.org/js/telegram-web-app.js"' in html
+    assert 'src="/static/vendor/telegram-web-app.js"' in html
+    assert 'src="https://telegram.org/js/telegram-web-app.js"' not in html
     for path in routes:
         if path.startswith("/api/"):
             assert (path in js if "{" not in path else "/api/v1/players/${encodeURIComponent(userId)}" in js)
@@ -377,7 +406,7 @@ def test_bootstrap_console_diagnostics_keep_credentials_out_of_messages():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     bootstrap = js[js.index("  async function bootstrap() {"):]
     telegram_script = re.search(
-        r'<script src="https://telegram\.org/js/telegram-web-app\.js"[^>]*></script>',
+        r'<script src="/static/vendor/telegram-web-app\.js"[^>]*></script>',
         html, re.S,
     ).group(0)
     assert 'onload="window.__telegramWebAppScriptStatus=\'loaded\'"' in telegram_script
