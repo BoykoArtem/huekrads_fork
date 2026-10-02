@@ -88,6 +88,65 @@ async def test_finish_persists_victory_before_cleanup_and_actual_rewards(result_
 
 
 @pytest.mark.asyncio
+async def test_final_hit_survivors_match_telegram_and_persisted_miniapp_result(
+    result_world, monkeypatch, fake_context,
+):
+    players = [
+        *(make_participant(user_id, attack="head", block="dick")
+          for user_id in (101, 102, 103, 104)),
+        make_participant(105, attack="head", block=None),
+        make_participant(202, attack=None, block=None),
+        make_participant(303, attack=None, block=None),
+    ]
+    battle = make_battle(players, phase="block", hits=0, round_num=1,
+                         boss_attack="head", boss_block="body")
+    battle["boss"] = duel.BOSSES[0]
+    battle["battle_id"] = "final-hit-survivors"
+    duel.ACTIVE_BOSS_BATTLES[CHAT_A] = battle
+    rng_calls = []
+    monkeypatch.setattr(duel, "_boss_auto_zone",
+                        lambda: rng_calls.append("auto") or "body")
+    monkeypatch.setattr(duel.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(duel, "reward_boss_victory", Mock(return_value=False))
+    monkeypatch.setattr(duel, "_maybe_award_boss_item", Mock(return_value=None))
+
+    await duel._boss_resolve_round(fake_context, CHAT_A)
+
+    assert rng_calls == []  # The finishing hit skips later auto choices.
+    assert battle["hits"] == 5
+    assert [player["rounds_survived"] for player in players] == [0, 0, 0, 0, 1, 1, 1]
+    assert [(player["hits"], player["misses"], player["blocks"]) for player in players] == [
+        (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0),
+        (1, 0, 0), (0, 0, 0), (0, 0, 0),
+    ]
+    assert all(not player["alive"] and player["death_round"] == 1 for player in players[:4])
+    assert all((player["death_by_zone"], player["death_defended_zone"],
+                player["death_attack_zone"]) == ("head", "dick", "head")
+               for player in players[:4])
+    assert all(player["alive"] and player["death_round"] is None for player in players[4:])
+    telegram = fake_context.bot.edit_message_text.await_args.kwargs["text"]
+    assert telegram.count("пережито раундов: <b>1</b>") == 3
+
+    stored = get_latest_boss_result(CHAT_A)
+    assert [row["rounds_survived"] for row in stored["participants"]] == [0, 0, 0, 0, 1, 1, 1]
+    assert [row["hits"] for row in stored["participants"]] == [1, 1, 1, 1, 1, 0, 0]
+    assert [row["death_round"] for row in stored["participants"]] == [1, 1, 1, 1, None, None, None]
+    assert len(stored["narrative"]["deaths"]) == 4
+    assert all((death["round"], death["attack_zone"]["id"],
+                death["defended_zone"]["id"], death["boss_attack_zone"]["id"])
+               == (1, "head", "dick", "head")
+               for death in stored["narrative"]["deaths"])
+    assert len(stored["narrative"]["survivors"]) == 3
+    for player in players[4:]:
+        recent = (await get_boss_battle_read_model(CHAT_A, player["tg_user"].id))[
+            "recent_result"]
+        assert recent["viewer"]["rounds_survived"] == 1
+        assert recent["viewer"]["hits"] == player["hits"]
+    assert (await get_boss_battle_read_model(CHAT_A, 105))[
+        "recent_result"]["hero"]["rounds_survived"] == 1
+
+
+@pytest.mark.asyncio
 async def test_defeat_and_zero_survivor_victory_keep_existing_semantics(result_world, monkeypatch):
     register(CHAT_A, 101, "player")
     report = AsyncMock()

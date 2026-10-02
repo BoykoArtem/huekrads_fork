@@ -1026,6 +1026,42 @@ async def test_nonlethal_round_preserves_attack_then_block_fallback_rng_order(
 
 
 @pytest.mark.asyncio
+async def test_final_hit_round_accounting_keeps_fallback_rng_trace(
+    monkeypatch, fake_context,
+):
+    from handlers import duel
+
+    chat_id = -723
+    before_finisher = make_participant(1, attack=None, block=None)
+    finisher = make_participant(2, attack="head", block=None)
+    after_finisher = make_participant(3, attack=None, block=None)
+    battle = make_battle(
+        [before_finisher, finisher, after_finisher], phase="block",
+        hits=3, boss_attack="head", boss_block="body",
+    )
+    duel.ACTIVE_BOSS_BATTLES[chat_id] = battle
+    auto_zone = Mock(side_effect=["head", "head"])
+    finish_victory = AsyncMock()
+    monkeypatch.setattr(duel, "_boss_auto_zone", auto_zone)
+    monkeypatch.setattr(duel, "_boss_finish_victory", finish_victory)
+    monkeypatch.setattr(duel.asyncio, "sleep", AsyncMock())
+
+    await duel._boss_resolve_round(fake_context, chat_id)
+
+    assert auto_zone.call_args_list == [call(), call()]
+    assert battle["hits"] == 5
+    assert [p["rounds_survived"] for p in
+            (before_finisher, finisher, after_finisher)] == [1, 1, 1]
+    assert [(p["hits"], p["misses"], p["blocks"]) for p in
+            (before_finisher, finisher, after_finisher)] == [
+        (1, 0, 1), (1, 0, 0), (0, 0, 0),
+    ]
+    assert after_finisher["attack"] is None
+    assert after_finisher["block"] is None
+    finish_victory.assert_awaited_once_with(fake_context, chat_id)
+
+
+@pytest.mark.asyncio
 async def test_boss_round_resolution_presentation_is_exact(monkeypatch, fake_context):
     from handlers import duel
 
