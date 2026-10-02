@@ -945,26 +945,49 @@
 
   async function bootstrap() {
     const webApp = window.Telegram?.WebApp;
+    const hasUnsafeStartParam = Boolean(webApp?.initDataUnsafe?.start_param);
+    const queryStartParam = new URLSearchParams(window.location.search).get("tgWebAppStartParam");
     if (!webApp || !webApp.initData) {
+      console.warn("miniapp_bootstrap", {
+        reason: "missing_init_data", status: null, has_init_data: false,
+        has_web_app: Boolean(webApp),
+        has_unsafe_start_param: hasUnsafeStartParam,
+        has_query_start_param: Boolean(queryStartParam),
+      });
       showUnavailable("Откройте приложение через кнопку /duel_app в игровом чате Telegram.");
       return;
     }
     webApp.ready();
     webApp.expand();
-    const launchToken = new URLSearchParams(webApp.initData).get("start_param") ||
-      new URLSearchParams(window.location.search).get("tgWebAppStartParam");
+    const initDataStartParam = new URLSearchParams(webApp.initData).get("start_param");
+    const launchToken = initDataStartParam || queryStartParam;
     if (!launchToken) {
+      console.warn("miniapp_bootstrap", {
+        reason: "missing_launch_token", status: null, has_init_data: true,
+        has_init_data_start_param: Boolean(initDataStartParam),
+        has_unsafe_start_param: hasUnsafeStartParam,
+        has_query_start_param: Boolean(queryStartParam),
+      });
       showUnavailable("Нужна ссылка из игрового чата. Вызовите там /duel_app ещё раз.");
       return;
     }
+    let stage = "session_request";
     try {
       const created = await apiRequest("/api/v1/session", {
         method: "POST", body: { init_data: webApp.initData, launch_token: launchToken },
       });
+      stage = "session_response";
       if (typeof created.session_token !== "string" || !created.session_token) throw new Error();
       sessionToken = created.session_token;
+      stage = "home_load";
       await loadView("home");
-    } catch {
+    } catch (error) {
+      console.warn("miniapp_bootstrap", {
+        reason: stage === "session_request" ? "session_api_error" :
+          stage === "session_response" ? "invalid_session_response" : "post_session_load_error",
+        status: Number.isInteger(error?.status) ? error.status : null,
+        has_init_data: true, has_launch_token: true,
+      });
       showUnavailable("Ссылка уже использована или устарела. Вернитесь в чат и вызовите /duel_app ещё раз.");
     }
   }

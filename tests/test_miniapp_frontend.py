@@ -28,6 +28,14 @@ def test_duel_timer_and_action_layout_in_browser_runtime():
     subprocess.run([node, str(harness)], check=True, timeout=10)
 
 
+def test_bootstrap_reasons_and_status_in_browser_runtime():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable for the vanilla JS runtime check")
+    harness = Path(__file__).with_name("miniapp_bootstrap_harness.cjs")
+    subprocess.run([node, str(harness)], check=True, timeout=10)
+
+
 def test_global_refresh_toolbar_is_absent_but_automatic_sync_remains():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
@@ -314,6 +322,8 @@ def test_frontend_has_only_session_duel_and_boss_posts():
     assert "ceremonial_bolt" not in js
     assert "cork_with_bite_marks" not in js
     assert 'action.addEventListener("click", () => challengeOpponent(opponent.user_id))' in js
+
+
     assert 'body: { opponent_user_id: opponentUserId }' in js
     assert 'await navigate("duel")' in js
     assert 'challengeInFlight' in js
@@ -359,6 +369,24 @@ def test_frontend_has_only_session_duel_and_boss_posts():
                  "/api/v1/dig"):
         assert path not in js
     assert 'method: "POST", body: { boss' not in js
+
+
+def test_bootstrap_console_diagnostics_keep_credentials_out_of_messages():
+    js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    bootstrap = js[js.index("  async function bootstrap() {"):]
+    assert 'webApp?.initDataUnsafe?.start_param' in bootstrap
+    assert 'get("tgWebAppStartParam")' in bootstrap
+    assert 'const launchToken = initDataStartParam || queryStartParam;' in bootstrap
+    assert 'reason: "missing_init_data", status: null' in bootstrap
+    assert 'has_web_app: Boolean(webApp)' in bootstrap
+    assert 'reason: "missing_launch_token", status: null' in bootstrap
+    assert 'stage === "session_request" ? "session_api_error"' in bootstrap
+    assert 'stage === "session_response" ? "invalid_session_response" : "post_session_load_error"' in bootstrap
+    assert 'status: Number.isInteger(error?.status) ? error.status : null' in bootstrap
+    for statement in re.findall(r'console\.warn\("miniapp_bootstrap", \{(.*?)\}\);',
+                                bootstrap, re.S):
+        assert "launchToken" not in statement
+        assert "webApp.initData" not in statement
 
 
 def test_home_and_opponents_render_full_read_only_stats_safely():

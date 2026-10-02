@@ -13,6 +13,8 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -57,6 +59,23 @@ _STATIC_DIR = Path(__file__).resolve().parent / "miniapp_static"
 _GNOME_FILE_ID = GNOME_FILE_IDS[DEFAULT_GNOME_VARIANT]
 _GNOME_IMAGE_VERSION = gnome_image_version(DEFAULT_GNOME_VARIANT)
 _GNOME_IMAGE_URL = f"/media/gnome?v={_GNOME_IMAGE_VERSION}"
+
+
+def _log_session_bootstrap(reason: str, status: int | str, *,
+                           user_id: int | None = None, chat_id: int | None = None,
+                           has_init_data: bool | None = None,
+                           has_launch_token: bool | None = None,
+                           auth_age_seconds: int | None = None,
+                           exception_class: str | None = None) -> None:
+    """Fixed fields only: never log credentials, request data, or exception text."""
+    logging.info(
+        "miniapp_bootstrap reason=%s status=%s user_id=%s chat_id=%s "
+        "has_init_data=%s has_launch_token=%s auth_age_seconds=%s exception_class=%s",
+        reason, status, user_id if user_id is not None else "-",
+        chat_id if chat_id is not None else "-", has_init_data,
+        has_launch_token, auth_age_seconds if auth_age_seconds is not None else "-",
+        exception_class or "-",
+    )
 
 
 def _versioned_static_url(filename: str) -> str:
@@ -285,6 +304,20 @@ def create_miniapp_api(*, bot_token: str | None = None,
     gnome_image_bytes: dict[str, bytes] = {}
     gnome_image_locks = {variant: asyncio.Lock() for variant in GNOME_VARIANTS}
 
+    @app.exception_handler(RequestValidationError)
+    async def session_request_validation(request: Request, exc: RequestValidationError):
+        if request.url.path == "/api/v1/session":
+            _log_session_bootstrap("request_received", "pending")
+            missing = {
+                error["loc"][-1] for error in exc.errors()
+                if error.get("type") == "missing" and error.get("loc")
+            }
+            reason = ("missing_init_data" if "init_data" in missing else
+                      "missing_launch_token" if "launch_token" in missing else
+                      "invalid_session_request")
+            _log_session_bootstrap(reason, 422)
+        return await request_validation_exception_handler(request, exc)
+
     @app.middleware("http")
     async def frontend_security_headers(request: Request, call_next):
         response = await call_next(request)
@@ -315,13 +348,53 @@ def create_miniapp_api(*, bot_token: str | None = None,
 
     @app.post("/api/v1/session")
     async def create_session(request: SessionRequest):
+        present = {
+            "has_init_data": bool(request.init_data),
+            "has_launch_token": bool(request.launch_token),
+        }
+        _log_session_bootstrap("request_received", "pending", **present)
+        if not present["has_init_data"]:
+            _log_session_bootstrap("missing_init_data", 401, **present)
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        if not present["has_launch_token"]:
+            _log_session_bootstrap("missing_launch_token", 401, **present)
+            raise HTTPException(status_code=401, detail="Unauthorized")
         try:
             verified = verify_telegram_init_data(request.init_data, token)
-        except InitDataError:
+        except InitDataError as exc:
+            reason = {
+                "Expired initData": "init_data_expired",
+                "Missing Telegram user": "init_data_user_missing",
+                "Invalid Telegram user": "init_data_user_invalid",
+            }.get(str(exc), "init_data_invalid")
+            _log_session_bootstrap(reason, 401, **present)
             raise HTTPException(status_code=401, detail="Unauthorized") from None
-        issued = await run_in_threadpool(exchange_launch_token, request.launch_token, verified.user_id)
+        except Exception as exc:
+            _log_session_bootstrap("unexpected_error", 500,
+                                   exception_class=type(exc).__name__, **present)
+            raise HTTPException(status_code=500, detail="Internal Server Error") from None
+        verified_context = {
+            **present, "user_id": verified.user_id,
+            "auth_age_seconds": int(time.time()) - verified.auth_date,
+        }
+        failure_reason: list[str] = []
+        try:
+            issued = await run_in_threadpool(
+                exchange_launch_token, request.launch_token, verified.user_id,
+                failure_reason=failure_reason,
+            )
+        except Exception as exc:
+            _log_session_bootstrap("unexpected_error", 500,
+                                   exception_class=type(exc).__name__,
+                                   **verified_context)
+            raise HTTPException(status_code=500, detail="Internal Server Error") from None
         if issued is None:
+            _log_session_bootstrap(failure_reason[0] if failure_reason else
+                                   "launch_token_unavailable", 401,
+                                   **verified_context)
             raise HTTPException(status_code=401, detail="Unauthorized")
+        _log_session_bootstrap("session_created", 200,
+                               chat_id=issued.session.chat_id, **verified_context)
         if telegram_bot is not None and issued.launch_message_id is not None:
             try:
                 await telegram_bot.delete_message(

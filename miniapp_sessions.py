@@ -70,10 +70,13 @@ def bind_launch_message_id(token: str, chat_id: int, user_id: int,
 
 
 def exchange_launch_token(token: str, verified_user_id: int, *,
-                          now: int | None = None) -> IssuedMiniAppSession | None:
+                          now: int | None = None,
+                          failure_reason: list[str] | None = None) -> IssuedMiniAppSession | None:
     """Consume once and insert the session in the same SQLite write transaction."""
     digest = _digest(token)
     if digest is None or type(verified_user_id) is not int or verified_user_id <= 0:
+        if failure_reason is not None:
+            failure_reason.append("launch_token_invalid")
         return None
     timestamp = int(time.time()) if now is None else now
     session_token = secrets.token_urlsafe(32)
@@ -85,7 +88,22 @@ def exchange_launch_token(token: str, verified_user_id: int, *,
                WHERE token_digest = ? AND consumed_at IS NULL AND expires_at > ?""",
             (digest, timestamp),
         ).fetchone()
-        if row is None or row[1] != verified_user_id:
+        if row is None:
+            if failure_reason is not None:
+                state = cursor.execute(
+                    """SELECT consumed_at, expires_at FROM miniapp_launch_tokens
+                       WHERE token_digest = ?""", (digest,),
+                ).fetchone()
+                failure_reason.append(
+                    "launch_token_not_found" if state is None else
+                    "launch_token_consumed" if state[0] is not None else
+                    "launch_token_expired" if state[1] <= timestamp else
+                    "launch_token_unavailable"
+                )
+            return None
+        if row[1] != verified_user_id:
+            if failure_reason is not None:
+                failure_reason.append("launch_token_wrong_user")
             return None
         cursor.execute(
             """UPDATE miniapp_launch_tokens SET consumed_at = ?
@@ -93,6 +111,8 @@ def exchange_launch_token(token: str, verified_user_id: int, *,
             (timestamp, digest, timestamp),
         )
         if cursor.rowcount != 1:
+            if failure_reason is not None:
+                failure_reason.append("launch_token_consumed")
             return None
         session = MiniAppSession(row[0], row[1], timestamp, timestamp + SESSION_TTL_SECONDS)
         cursor.execute(

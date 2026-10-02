@@ -69,7 +69,9 @@ def verify_telegram_init_data(raw_init_data: str, bot_token: str, *,
         raise InitDataError("Expired initData")
     try:
         user = json.loads(fields["user"])
-    except (KeyError, TypeError, ValueError) as exc:
+    except KeyError as exc:
+        raise InitDataError("Missing Telegram user") from exc
+    except (TypeError, ValueError) as exc:
         raise InitDataError("Invalid Telegram user") from exc
     if not isinstance(user, dict) or type(user.get("id")) is not int or not (0 < user["id"] < 2**52):
         raise InitDataError("Invalid Telegram user")
