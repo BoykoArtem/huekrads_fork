@@ -25,6 +25,7 @@ from database import (
     get_duel_item_event_chat_ids,
     set_duel_item_event_message,
 )
+from handlers.duel_messaging import schedule_auto_delete
 from text_resources import get_text, get_text_list, get_text_mapping
 
 
@@ -285,3 +286,11 @@ async def duel_item_event_callback(
         )
     except Exception:
         logging.exception("Не удалось обновить claimed item event %s", event_id)
+    else:
+        try:
+            schedule_auto_delete(context, chat_id, [event["message_id"]])
+        except Exception:
+            logging.exception(
+                "TEMP_MESSAGE_DELETE_FAILED chat_id=%s message_id=%s event_id=%s operation=schedule",
+                chat_id, event["message_id"], event_id,
+            )

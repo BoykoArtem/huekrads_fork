@@ -142,6 +142,8 @@ timeout:
   auto_attack: "⚔️ <b>{title}</b> зазевался. Нож сам пошёл в <b>{zone}</b>."
   auto_block: "🛡 <b>{title}</b> зазевался. Рука сама прикрыла <b>{zone}</b>."
 round:
+  log_heading: "⚔️ <b>Ход битвы — раунд {round}</b>"
+  log_truncated: "\n… Журнал раунда сокращён."
   attack_result:
     hit: 💥 ПОПАДАНИЕ
     miss: 💨 ПРОМАХ

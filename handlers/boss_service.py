@@ -17,6 +17,7 @@ class BossActionResult:
 async def apply_boss_action(context, chat_id: int, user_id: int, intent: str,
                             *, zone: str | None = None, tg_user=None,
                             expected_battle_id: str | None = None,
+                            expected_message_id: int | None = None,
                             expected_round: int | None = None,
                             expected_phase: str | None = None,
                             on_accepted=None,
@@ -34,6 +35,8 @@ async def apply_boss_action(context, chat_id: int, user_id: int, intent: str,
         if duel.ACTIVE_BOSS_BATTLES.get(chat_id) is not battle:
             return BossActionResult(False, "stale_battle")
         if expected_battle_id is not None and battle.get("battle_id") != expected_battle_id:
+            return BossActionResult(False, "stale_battle")
+        if expected_message_id is not None and battle["message_id"] != expected_message_id:
             return BossActionResult(False, "stale_battle")
         if expected_phase is not None and battle["phase"] != expected_phase:
             return BossActionResult(False, "stale_phase")

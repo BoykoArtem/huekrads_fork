@@ -1,9 +1,10 @@
 import asyncio
 import logging
 import random
+import re
 import secrets
 import time
-from html import escape
+from html import escape, unescape
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, Forbidden
@@ -1943,12 +1944,99 @@ BOSS_PHASE_TIMEOUT = 10
 BOSS_ROUND_PAUSE = 5
 
 BOSS_JOIN_TIMEOUT = 30
+BOSS_LOG_DELETE_DELAY = 60
 
 
 BOSS_ZONES = ("head", "body", "dick")
 
 ACTIVE_BOSS_BATTLES = {}
 _BOSS_START_LOCKS = {}
+
+
+def _boss_fit_log(text: str) -> str:
+    """Keep one HTML log within Telegram's message limit."""
+    def units(value):
+        return len(value.encode("utf-16-le")) // 2
+
+    if units(text) <= 4000:
+        return text
+    plain = unescape(re.sub(r"<[^>]+>", "", text))
+    suffix = get_text("boss.round.log_truncated")
+    limit = 4000 - units(suffix)
+    plain = plain[:limit]
+    while units(escape(plain)) > limit:
+        plain = plain[:-1]
+    return escape(plain) + suffix
+
+
+def _boss_schedule_log_delete(context, chat_id, battle, message_id):
+    try:
+        schedule_auto_delete(
+            context, chat_id, [message_id], delay=BOSS_LOG_DELETE_DELAY,
+            battle_id=battle.get("battle_id"), round_num=battle["round"],
+        )
+    except Exception:
+        logging.exception(
+            "BATTLE_MESSAGE_DELETE_FAILED chat_id=%s battle_id=%s round=%s message_id=%s operation=schedule",
+            chat_id, battle.get("battle_id"), battle["round"], message_id,
+        )
+
+
+async def _boss_publish_round_log(context, chat_id, battle, text):
+    text = _boss_fit_log(text)
+    message_id = battle.get("battle_log_message_id")
+    if message_id is not None and battle.get("battle_log_rendered_text") == text:
+        return message_id
+    if message_id is not None:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=message_id, text=text, parse_mode="HTML",
+            )
+            logging.info(
+                "BATTLE_MESSAGE_EDIT chat_id=%s battle_id=%s round=%s message_id=%s",
+                chat_id, battle.get("battle_id"), battle["round"], message_id,
+            )
+            battle["battle_log_rendered_text"] = text
+            return message_id
+        except BadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                battle["battle_log_rendered_text"] = text
+                return message_id
+            logging.exception(
+                "BATTLE_MESSAGE_EDIT_FAILED chat_id=%s battle_id=%s round=%s message_id=%s",
+                chat_id, battle.get("battle_id"), battle["round"], message_id,
+            )
+            _boss_schedule_log_delete(context, chat_id, battle, message_id)
+        except Exception:
+            logging.exception(
+                "BATTLE_MESSAGE_EDIT_FAILED chat_id=%s battle_id=%s round=%s message_id=%s",
+                chat_id, battle.get("battle_id"), battle["round"], message_id,
+            )
+            _boss_schedule_log_delete(context, chat_id, battle, message_id)
+    try:
+        message = await context.bot.send_message(
+            chat_id=chat_id, text=text, parse_mode="HTML",
+        )
+    except Exception:
+        logging.exception(
+            "BATTLE_MESSAGE_CREATE_FAILED chat_id=%s battle_id=%s round=%s",
+            chat_id, battle.get("battle_id"), battle["round"],
+        )
+        return None
+    battle["battle_log_message_id"] = message.message_id
+    battle["battle_log_rendered_text"] = text
+    logging.info(
+        "BATTLE_MESSAGE_CREATE chat_id=%s battle_id=%s round=%s message_id=%s",
+        chat_id, battle.get("battle_id"), battle["round"], message.message_id,
+    )
+    return message.message_id
+
+
+async def _boss_publish_pending_actions(context, chat_id, battle):
+    lines = battle.get("battle_log_lines", [])
+    if lines:
+        text = get_text("boss.round.log_heading", round=battle["round"])
+        await _boss_publish_round_log(context, chat_id, battle, text + "\n\n" + "\n".join(lines))
 
 # ------------------------------------------------------------
 # КЛАВИАТУРЫ
@@ -2067,7 +2155,9 @@ def _boss_schedule_phase_timer(context, chat_id, battle, phase):
     """Keep the existing timeout task; record its deadline for presentation."""
     battle["deadline_at"] = time.time() + BOSS_PHASE_TIMEOUT
     battle["phase_task"] = asyncio.create_task(
-        _boss_phase_timer(context, chat_id, battle["round"], phase)
+        _boss_phase_timer(
+            context, chat_id, battle["round"], phase, battle.get("battle_id"),
+        )
     )
 
 
@@ -2109,23 +2199,7 @@ async def _boss_auto_choose_for_zazevasha(
             zone=BOSS_ZONE_NAMES[zone],
         )
 
-    try:
-        timeout_msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=action_text,
-            parse_mode="HTML",
-        )
-        schedule_auto_delete(
-            context,
-            chat_id,
-            [timeout_msg.message_id],
-        )
-    except Exception:
-        logging.exception(
-            "Не удалось отправить сообщение автодействия босса "
-            "в чат %s",
-            chat_id,
-        )
+    battle.setdefault("battle_log_lines", []).append(action_text)
 
 
 # ------------------------------------------------------------
@@ -2163,7 +2237,15 @@ async def _boss_start_round(
         boss_attack,
         boss_block,
     )
+    battle["battle_log_message_id"] = None
+    battle["battle_log_rendered_text"] = None
+    battle["battle_log_lines"] = []
     started_round = battle["round"]
+
+    await _boss_publish_round_log(
+        context, chat_id, battle,
+        get_text("boss.round.log_heading", round=started_round),
+    )
 
     await _boss_render_phase(
         context,
@@ -2188,6 +2270,7 @@ async def _boss_phase_timer(
     chat_id,
     round_num,
     phase,
+    battle_id=None,
 ):
     current_task = asyncio.current_task()
 
@@ -2199,6 +2282,8 @@ async def _boss_phase_timer(
     battle = ACTIVE_BOSS_BATTLES.get(chat_id)
 
     if not battle:
+        return
+    if battle_id is not None and battle.get("battle_id") != battle_id:
         return
 
     finish_defeat = False
@@ -2236,6 +2321,8 @@ async def _boss_phase_timer(
                         participant,
                         phase,
                     )
+
+            await _boss_publish_pending_actions(context, chat_id, battle)
 
             if phase == "attack":
                 battle["phase"] = "block"
@@ -2349,6 +2436,7 @@ async def boss_callback(
     result = await apply_boss_action(
         context, update.effective_chat.id, query.from_user.id, intent,
         zone=zone, tg_user=query.from_user, expected_round=round_num,
+        expected_message_id=getattr(getattr(query, "message", None), "message_id", None),
         expected_phase=intent if intent != "join" else None,
         on_accepted=acknowledge,
     )
@@ -2495,19 +2583,12 @@ async def _boss_resolve_round(
 
         outcome = round_result["outcome"]
 
-    try:
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=battle["message_id"],
-            text=text,
-            parse_mode="HTML",
-        )
-    except Exception:
-        logging.exception(
-            "Не удалось показать результат раунда босса "
-            "в чате %s",
-            chat_id,
-        )
+    action_lines = battle.get("battle_log_lines", [])
+    if action_lines:
+        text = "\n".join(action_lines) + "\n\n" + text
+    message_id = await _boss_publish_round_log(context, chat_id, battle, text)
+    if message_id is not None:
+        _boss_schedule_log_delete(context, chat_id, battle, message_id)
 
     if outcome == "victory":
         await asyncio.sleep(2)
@@ -2919,6 +3000,7 @@ async def _start_boss_battle_locked(
     registered_rows = _boss_consume_registrations(chat_id)
 
     battle = {
+        "chat_id": chat_id,
         "battle_id": secrets.token_urlsafe(16),
         "boss": boss,
         "participants": {},
@@ -2926,6 +3008,9 @@ async def _start_boss_battle_locked(
         "round": 0,
         "phase": "join",
         "message_id": bot_msg.message_id,
+        "battle_log_message_id": None,
+        "battle_log_rendered_text": None,
+        "battle_log_lines": [],
         "phase_task": None,
         "lock": asyncio.Lock(),
         "boss_attack": None,
@@ -2981,6 +3066,7 @@ async def _start_boss_battle_locked(
         _boss_join_timer(
             context,
             chat_id,
+            battle["battle_id"],
         )
     )
 
@@ -3175,6 +3261,7 @@ async def boss_daily_job(context: ContextTypes.DEFAULT_TYPE):
 async def _boss_join_timer(
     context,
     chat_id,
+    battle_id=None,
 ):
     try:
         await asyncio.sleep(BOSS_JOIN_TIMEOUT)
@@ -3184,6 +3271,8 @@ async def _boss_join_timer(
     battle = ACTIVE_BOSS_BATTLES.get(chat_id)
 
     if not battle:
+        return
+    if battle_id is not None and battle.get("battle_id") != battle_id:
         return
 
     async with battle["lock"]:
