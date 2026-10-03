@@ -71,6 +71,7 @@ from handlers.weather import (
 from handlers.inline_query import inline_query_dispatch
 
 from handlers.hyperborean_event import HYPERBOREAN_HUY_CHECK_MINUTES
+from handlers.moss_choice_event import moss_choice_callback
 from text_resources import get_text
 
 from handlers.duel import (
@@ -496,6 +497,13 @@ async def main():
         CallbackQueryHandler(
             hyperboreic_huy_callback,
             pattern=r"^hyperboreic_huy(?:_(?:self|other))?$",
+        )
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            moss_choice_callback,
+            pattern=r"^moss_choice:[0-9]+:(?:clever|wise)$",
         )
     )
 

@@ -520,3 +520,13 @@ async def test_registered_hyperborean_callback_handler_routes_all_supported_payl
 
     assert not handler.check_update(update_with("hyperboreic_huy_unknown"))
     assert not handler.check_update(update_with("duel_strike_head_1"))
+
+    moss_handlers = [
+        item for item in registered_handlers
+        if isinstance(item, CallbackQueryHandler)
+        and item.callback is bot.moss_choice_callback
+    ]
+    assert len(moss_handlers) == 1
+    assert moss_handlers[0].check_update(update_with("moss_choice:17:wise"))
+    assert moss_handlers[0].check_update(update_with("moss_choice:17:clever"))
+    assert not handler.check_update(update_with("moss_choice:17:wise"))

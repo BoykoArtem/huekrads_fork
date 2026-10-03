@@ -313,6 +313,19 @@ def init_db():
         """)
 
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS moss_choice_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                event_date TEXT NOT NULL,
+                message_id INTEGER,
+                claimed_by INTEGER,
+                choice TEXT CHECK (choice IN ('clever', 'wise')),
+                claimed_at TEXT,
+                UNIQUE (chat_id, event_date)
+            )
+        """)
+
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS duel_dig_daily (
                 chat_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,

@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 from database import format_user_title, get_all_chats, get_or_create_duel_user
 from text_resources import get_text
 from module_settings import is_module_enabled
+from handlers.moss_choice_event import spawn_moss_choice_event
 
 HYPERBOREAN_HUY_CHANCE = 0.05
 HYPERBOREAN_HUY_CHECK_MINUTES = 60
@@ -144,6 +145,10 @@ async def hyperboreic_huy_daily_job(
                 "для чата %s",
                 chat_id,
             )
+        try:
+            await spawn_moss_choice_event(context, chat_id, _current_date().isoformat())
+        except Exception:
+            logging.exception("Moss choice check failed in chat %s", chat_id)
 
 
 def _claim_hyperboreic_huy(
