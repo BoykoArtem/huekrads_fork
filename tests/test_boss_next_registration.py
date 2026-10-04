@@ -2,6 +2,8 @@
 
 import asyncio
 import sqlite3
+import subprocess
+import sys
 from datetime import datetime as real_datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -27,10 +29,12 @@ def command(chat_id, tg_user, chat_type="group"):
     ))
 
 
-def callback(chat_id, tg_user, *, effective_chat_id=None):
+def callback(chat_id, tg_user, *, effective_chat_id=None, message_id=77):
     query = SimpleNamespace(
         data="boss_reg_next", from_user=tg_user, answer=AsyncMock(),
-        message=SimpleNamespace(chat=SimpleNamespace(id=chat_id, type="group")),
+        message=SimpleNamespace(
+            chat=SimpleNamespace(id=chat_id, type="group"), message_id=message_id,
+        ),
     )
     return SimpleNamespace(callback_query=query, effective_chat=SimpleNamespace(
         id=effective_chat_id if effective_chat_id is not None else chat_id,
@@ -112,6 +116,84 @@ def test_legacy_migration_is_idempotent_and_keeps_existing_next_row(
 
 
 @pytest.mark.asyncio
+async def test_four_users_share_result_button_without_disabling_it(next_queue, fake_context):
+    queries = []
+    for user_id in (1, 2, 3, 4):
+        update, query = callback(-1, user(user_id))
+        await duel.boss_callback(update, fake_context)
+        queries.append(query)
+    assert [row[0] for row in boss_registration._boss_get_registered_users(-1)] == [1, 2, 3, 4]
+    for query in queries:
+        query.answer.assert_awaited_once_with(get_text("boss.registration.callback_registered"))
+    fake_context.bot.edit_message_text.assert_not_awaited()
+
+    repeat, query = callback(-1, user(1))
+    await duel.boss_callback(repeat, fake_context)
+    query.answer.assert_awaited_once_with(
+        get_text("boss.registration.callback_already_registered")
+    )
+    assert len(boss_registration._boss_get_registered_users(-1)) == 4
+
+
+@pytest.mark.asyncio
+async def test_four_concurrent_registrations_are_atomic_per_chat(next_queue, fake_context):
+    updates = [callback(-1, user(user_id)) for user_id in (1, 2, 3, 4)]
+    await asyncio.gather(*(duel.boss_callback(update, fake_context) for update, _ in updates))
+    assert {row[0] for row in boss_registration._boss_get_registered_users(-1)} == {1, 2, 3, 4}
+    assert all(query.answer.await_count == 1 for _, query in updates)
+
+    # Separate SQLite connections also serialize simultaneous inserts.
+    result = await asyncio.gather(*(
+        asyncio.to_thread(boss_registration._boss_register_user, -2, user(user_id))
+        for user_id in (1, 2, 3, 4)
+    ))
+    assert result == [True] * 4
+    assert {row[0] for row in boss_registration._boss_get_registered_users(-2)} == {1, 2, 3, 4}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("midnight_first", [True, False])
+async def test_signup_survives_midnight_and_new_python_process_in_both_orders(
+    next_queue, fake_context, monkeypatch, midnight_first,
+):
+    today = ["2026-10-03"]
+    monkeypatch.setattr(boss_registration, "_legacy_registration_today", lambda: today[0])
+    duel.ACTIVE_BOSS_BATTLES[-1] = {"battle_id": "old-runtime-battle"}
+    update, query = callback(-1, user(41))
+    await duel.boss_callback(update, fake_context)
+    query.answer.assert_awaited_once_with(get_text("boss.registration.callback_registered"))
+
+    def fresh_process_reads_queue():
+        script = (
+            "import sys; from pathlib import Path; "
+            "from handlers import boss_registration as b; "
+            "b._BOSS_REG_DB_PATH = Path(sys.argv[1]); "
+            "assert [row[0] for row in b._boss_get_registered_users(-1)] == [41]"
+        )
+        subprocess.run([sys.executable, "-c", script, str(next_queue)],
+                       check=True, capture_output=True, text=True)
+        duel.ACTIVE_BOSS_BATTLES.clear()
+        duel._BOSS_START_LOCKS.clear()
+
+    if midnight_first:
+        today[0] = "2026-10-04"
+        assert boss_registration._boss_registration_snapshot(-1, 41) == (1, True)
+        fresh_process_reads_queue()
+    else:
+        fresh_process_reads_queue()
+        today[0] = "2026-10-04"
+    assert boss_registration._boss_get_registered_users(-1)[0][0] == 41
+
+    monkeypatch.setattr(duel, "_boss_make_participant", lambda person, _: {"id": person.id})
+    assert await duel._start_boss_battle(fake_context, -1)
+    battle = duel.ACTIVE_BOSS_BATTLES[-1]
+    assert battle["battle_id"] != "old-runtime-battle"
+    assert 41 in battle["participants"]
+    assert boss_registration._boss_get_registered_users(-1) == []
+    battle["phase_task"].cancel()
+
+
+@pytest.mark.asyncio
 async def test_finish_command_and_old_result_button_share_next_queue(
     next_queue, fake_context, monkeypatch,
 ):
@@ -151,6 +233,88 @@ async def test_finish_command_and_old_result_button_share_next_queue(
     await duel.boss_callback(second_button, fake_context)
     assert second_query.answer.await_args.args == (get_text("boss.registration.callback_already_registered"),)
     assert len(boss_registration._boss_get_registered_users(chat_id)) == 2
+
+
+@pytest.mark.asyncio
+async def test_previous_battle_log_cleanup_does_not_remove_signup_button(
+    next_queue, fake_context, monkeypatch,
+):
+    chat_id = -11
+    monkeypatch.setattr(duel, "_persist_boss_finish_snapshot", Mock())
+    monkeypatch.setattr(duel, "_boss_final_report", lambda *_: "final result")
+    monkeypatch.setattr(duel, "_maybe_award_boss_item", lambda *_: None)
+    duel.ACTIVE_BOSS_BATTLES[chat_id] = {
+        "battle_id": "finished-battle", "message_id": 42,
+        "battle_log_message_id": 55, "participants": {}, "phase_task": None,
+    }
+    await duel._boss_finish_defeat(fake_context, chat_id)
+    assert chat_id not in duel.ACTIVE_BOSS_BATTLES
+    assert fake_context.bot.edit_message_text.await_args.kwargs["reply_markup"] is not None
+    fake_context.job.data = {
+        "chat_id": chat_id, "message_ids": [55],
+        "battle_id": "finished-battle", "round": 1,
+    }
+    await duel.delete_messages_job(fake_context)
+    fake_context.bot.delete_message.assert_awaited_once_with(
+        chat_id=chat_id, message_id=55,
+    )
+
+    update, query = callback(chat_id, user(11), message_id=42)
+    await duel.boss_callback(update, fake_context)
+    query.answer.assert_awaited_once_with(get_text("boss.registration.callback_registered"))
+    assert boss_registration._boss_registration_snapshot(chat_id, 11) == (1, True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_step", ["enable", "register"])
+async def test_signup_database_error_answers_and_does_not_block_later_user(
+    next_queue, fake_context, monkeypatch, caplog, failing_step,
+):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    name = "set_boss_enabled" if failing_step == "enable" else "_boss_register_user"
+    original = getattr(duel, name)
+    def fail_once(*args):
+        monkeypatch.setattr(duel, name, original)
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(duel, name, fail_once)
+
+    first, first_query = callback(-1, user(11))
+    await duel.boss_callback(first, fake_context)
+    first_query.answer.assert_awaited_once_with(
+        get_text("boss.registration.callback_error"), show_alert=True,
+    )
+    assert boss_registration._boss_get_registered_users(-1) == []
+    assert "BOSS_NEXT_BATTLE_SIGNUP_FAILED" in caplog.text
+
+    second, second_query = callback(-1, user(12))
+    await duel.boss_callback(second, fake_context)
+    second_query.answer.assert_awaited_once_with(
+        get_text("boss.registration.callback_registered")
+    )
+    assert [row[0] for row in boss_registration._boss_get_registered_users(-1)] == [12]
+    assert "BOSS_NEXT_BATTLE_SIGNUP_OK" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_answer_failure_after_commit_is_logged_and_retry_reports_already(
+    next_queue, fake_context, caplog,
+):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    update, query = callback(-1, user(11))
+    query.answer.side_effect = RuntimeError("Telegram unavailable")
+    await duel.boss_callback(update, fake_context)
+    assert boss_registration._boss_registration_snapshot(-1, 11) == (1, True)
+    assert "stage=answer registration_committed=True" in caplog.text
+
+    retry, retry_query = callback(-1, user(11))
+    await duel.boss_callback(retry, fake_context)
+    retry_query.answer.assert_awaited_once_with(
+        get_text("boss.registration.callback_already_registered")
+    )
 
 
 @pytest.mark.asyncio
@@ -303,6 +467,14 @@ async def test_registration_keeps_group_eligibility_for_command_and_button(
         get_text("boss.registration.group_only"), show_alert=True,
     )
     assert boss_registration._boss_registration_snapshot(11, 1) == (0, False)
+
+    missing_user, missing_query = callback(-1, user(2))
+    missing_query.from_user = None
+    await duel.boss_callback(missing_user, fake_context)
+    missing_query.answer.assert_awaited_once_with(
+        get_text("boss.registration.callback_error"), show_alert=True,
+    )
+    assert boss_registration._boss_registration_snapshot(-1, 2) == (0, False)
 
 
 @pytest.mark.asyncio

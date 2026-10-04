@@ -2389,18 +2389,61 @@ async def boss_callback(
 
     data = query.data
     if data == "boss_reg_next":
-        chat = getattr(getattr(query, "message", None), "chat", None)
+        message = getattr(query, "message", None)
+        chat = getattr(message, "chat", None)
+        chat_id = getattr(chat, "id", None)
+        user_id = getattr(getattr(query, "from_user", None), "id", None)
+        message_id = getattr(message, "message_id", None)
+        current_battle = ACTIVE_BOSS_BATTLES.get(chat_id)
+        current_battle_id = current_battle.get("battle_id") if current_battle else None
+        logging.info(
+            "BOSS_NEXT_BATTLE_SIGNUP_CALLBACK chat_id=%s user_id=%s current_battle_id=%s "
+            "callback_data=%s message_id=%s",
+            chat_id, user_id, current_battle_id, data, message_id,
+        )
         if chat is None or chat.type not in {"group", "supergroup"}:
+            logging.info(
+                "BOSS_NEXT_BATTLE_SIGNUP_REJECTED chat_id=%s user_id=%s "
+                "current_battle_id=%s message_id=%s reason=group_only",
+                chat_id, user_id, current_battle_id, message_id,
+            )
             await query.answer(get_text("boss.registration.group_only"), show_alert=True)
             return
         if not query.from_user:
+            logging.warning(
+                "BOSS_NEXT_BATTLE_SIGNUP_REJECTED chat_id=%s user_id=%s "
+                "current_battle_id=%s message_id=%s reason=missing_user",
+                chat_id, user_id, current_battle_id, message_id,
+            )
+            await query.answer(get_text("boss.registration.callback_error"), show_alert=True)
             return
-        set_boss_enabled(chat.id, True)
-        added = _boss_register_user(chat.id, query.from_user)
-        await query.answer(get_text(
-            "boss.registration.callback_registered" if added
-            else "boss.registration.callback_already_registered"
-        ))
+        try:
+            set_boss_enabled(chat_id, True)
+            added = _boss_register_user(chat_id, query.from_user)
+        except Exception:
+            logging.exception(
+                "BOSS_NEXT_BATTLE_SIGNUP_FAILED chat_id=%s user_id=%s "
+                "current_battle_id=%s message_id=%s stage=database",
+                chat_id, user_id, current_battle_id, message_id,
+            )
+            await query.answer(get_text("boss.registration.callback_error"), show_alert=True)
+            return
+        logging.info(
+            "BOSS_NEXT_BATTLE_SIGNUP_%s chat_id=%s user_id=%s current_battle_id=%s "
+            "message_id=%s queue=next",
+            "OK" if added else "ALREADY", chat_id, user_id, current_battle_id, message_id,
+        )
+        try:
+            await query.answer(get_text(
+                "boss.registration.callback_registered" if added
+                else "boss.registration.callback_already_registered"
+            ))
+        except Exception:
+            logging.exception(
+                "BOSS_NEXT_BATTLE_SIGNUP_FAILED chat_id=%s user_id=%s "
+                "current_battle_id=%s message_id=%s stage=answer registration_committed=%s",
+                chat_id, user_id, current_battle_id, message_id, added,
+            )
         return
 
     zone = None
@@ -3016,6 +3059,11 @@ async def _start_boss_battle_locked(
         "boss_attack": None,
         "boss_block": None,
     }
+
+    logging.info(
+        "BOSS_NEXT_BATTLE_SIGNUP_CONSUMED chat_id=%s battle_id=%s user_ids=%s",
+        chat_id, battle["battle_id"], [row[0] for row in registered_rows],
+    )
 
     for row in registered_rows:
         tg_user = _boss_tg_user_from_registration(row)

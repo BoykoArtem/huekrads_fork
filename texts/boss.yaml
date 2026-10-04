@@ -85,6 +85,7 @@ registration:
   next_already_registered: "🍺 Ты уже записан на следующую битву с боссом."
   callback_registered: Ты записан на следующую битву с боссом!
   callback_already_registered: Ты уже записан на следующую битву с боссом.
+  callback_error: Не удалось записаться. Попробуй ещё раз.
   group_only: ⚔️ Записываться на гномью бойню можно только в группе.
   participant_count: " Записано участников: <b>{count}</b>"
 command:
