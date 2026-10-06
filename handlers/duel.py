@@ -39,6 +39,7 @@ from database import (
     get_bosses_defeated,
     is_boss_enabled,
     set_boss_enabled,
+    is_deleted_user,
     add_duel_inventory_item,
     get_duel_inventory,
     has_huecrab,
@@ -261,7 +262,8 @@ def _maybe_steal_loser_inventory_item(
 
 
 def _maybe_award_boss_item(chat_id: int, battle: dict) -> str | None:
-    survivors = _boss_alive_players(battle)
+    survivors = [p for p in _boss_alive_players(battle)
+                 if not is_deleted_user(p["tg_user"].id)]
     if not survivors:
         return None
     if random.random() >= BOSS_ITEM_DROP_CHANCE:
@@ -1492,6 +1494,9 @@ async def duel_command(
     chat_id = update.message.chat_id
 
     initiator_tg = update.message.from_user
+    if is_deleted_user(initiator_tg.id):
+        await send_and_schedule(update, context, get_text("gnome_deletion.deleted"))
+        return
 
     # --------------------------------------------------------
     # Проверяем наличие хуя ДО выбора соперника.
@@ -1620,6 +1625,9 @@ async def duel_select_callback(
     )
 
     initiator_tg = query.from_user
+    if is_deleted_user(initiator_tg.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
+        return
     chat_id = update.effective_chat.id
 
     await query.answer()
@@ -1673,6 +1681,9 @@ def _legacy_get_huyanie_title(stolen_dicks_count: int) -> str:
 async def duel_stats_command(update, context):
     if not update.message or not update.message.from_user or not update.message.chat:
         return
+    if is_deleted_user(update.message.from_user.id):
+        await send_and_schedule(update, context, get_text("gnome_deletion.deleted"))
+        return
 
     chat_id = update.message.chat_id
 
@@ -1684,6 +1695,9 @@ async def duel_stats_command(update, context):
 
 async def inspect_command(update, context):
     if not update.message or not update.message.from_user or not update.message.chat:
+        return
+    if is_deleted_user(update.message.from_user.id):
+        await send_and_schedule(update, context, get_text("gnome_deletion.deleted"))
         return
     message = update.message
     try:
@@ -2386,6 +2400,9 @@ async def boss_callback(
     query = update.callback_query
     if not query or not query.data:
         return
+    if query.from_user is not None and is_deleted_user(query.from_user.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
+        return
 
     data = query.data
     if data == "boss_reg_next":
@@ -3068,6 +3085,9 @@ async def _start_boss_battle_locked(
     for row in registered_rows:
         tg_user = _boss_tg_user_from_registration(row)
 
+        if is_deleted_user(tg_user.id):
+            continue
+
         if tg_user.id in battle["participants"]:
             continue
 
@@ -3134,6 +3154,9 @@ async def boss_reg_command(
         or not update.message.from_user
         or not update.message.chat
     ):
+        return
+    if is_deleted_user(update.message.from_user.id):
+        await send_and_schedule(update, context, get_text("gnome_deletion.deleted"))
         return
 
     chat = update.message.chat

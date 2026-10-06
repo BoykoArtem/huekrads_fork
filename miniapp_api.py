@@ -344,6 +344,9 @@ def create_miniapp_api(*, bot_token: str | None = None,
         session = get_miniapp_session(authorization[7:])
         if session is None:
             raise HTTPException(status_code=401, detail="Unauthorized")
+        from database import is_deleted_user
+        if is_deleted_user(session.user_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
         return session
 
     @app.post("/api/v1/session")

@@ -165,6 +165,9 @@ def _claim_hyperboreic_huy(
         "error" — ошибка БД.
     """
 
+    from database import is_deleted_user
+    if is_deleted_user(tg_user.id):
+        return "missing"
     user = get_or_create_duel_user(
         tg_user,
         chat_id,
@@ -181,6 +184,9 @@ def _claim_hyperboreic_huy(
             str(db_path),
             timeout=10,
         ) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT 1 FROM deleted_users WHERE user_id = ?", (user_id,)).fetchone():
+                return "missing"
             cursor = conn.execute(
                 """
                 SELECT
@@ -250,16 +256,23 @@ def _claim_hyperboreic_huy_for_other(
 ):
     """Resolve the "two for another" action for one user of this chat."""
     try:
+        from database import is_deleted_user
+        if is_deleted_user(tg_user.id):
+            return "missing", None, False
         # This preserves the existing claim behaviour: the player pressing a
         # button is registered before an event can be resolved.
         get_or_create_duel_user(tg_user, chat_id)
 
         with sqlite3.connect(str(_HYPERBOREAN_DB_PATH), timeout=10) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT 1 FROM deleted_users WHERE user_id = ?", (tg_user.id,)).fetchone():
+                return "missing", None, False
             candidates = conn.execute(
                 """
                 SELECT user_id, username, display_name, points, dick_stolen_today, dwarf_name
                 FROM duel_users
-                WHERE chat_id = ?
+                WHERE chat_id = ? AND NOT EXISTS
+                    (SELECT 1 FROM deleted_users AS d WHERE d.user_id = duel_users.user_id)
                 """,
                 (chat_id,),
             ).fetchall()
@@ -314,6 +327,10 @@ async def hyperboreic_huy_callback(
         return
 
     chat_id = update.effective_chat.id
+    from database import is_deleted_user
+    if is_deleted_user(query.from_user.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
+        return
     event = ACTIVE_HYPERBOREAN_EVENTS.get(chat_id)
 
     if not event:

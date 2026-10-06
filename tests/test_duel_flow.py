@@ -58,7 +58,7 @@ def callback_update(data, user, message=None):
 
 
 @pytest.fixture(autouse=True)
-def clean_active_duels():
+def clean_active_duels(temp_database):
     from handlers import duel
 
     duel.ACTIVE_DUELS.clear()

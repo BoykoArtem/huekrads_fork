@@ -84,6 +84,10 @@ async def huecrab_tame_callback(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     if not query or not query.from_user or not query.message or not update.effective_chat:
         return
+    from database import is_deleted_user
+    if is_deleted_user(query.from_user.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
+        return
     try:
         event_id = int(query.data.removeprefix(HUECRAB_CALLBACK_PREFIX))
     except (AttributeError, ValueError):

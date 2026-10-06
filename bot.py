@@ -20,6 +20,7 @@ from telegram.ext import (
     ContextTypes,
     InlineQueryHandler,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -109,6 +110,10 @@ from handlers.huecrab import (
     HUECRAB_CHECK_MINUTES, huecrab_autoloot_job,
     huecrab_event_job, huecrab_tame_callback,
 )
+from handlers.gnome_deletion import (
+    dickpukku_command, dickpukku_callback, return_gnome_command,
+    guard_deleted_game_update,
+)
 
 
 logging.basicConfig(
@@ -123,6 +128,7 @@ logger = logging.getLogger(__name__)
 
 BOT_COMMANDS = [
     BotCommand("start", get_text("menu.commands.start")),
+    BotCommand("dickpukku", get_text("menu.commands.dickpukku")),
     BotCommand("help", get_text("menu.commands.help")),
     BotCommand("donate", get_text("menu.commands.donate")),
     BotCommand("top", get_text("menu.commands.top")),
@@ -282,6 +288,8 @@ async def main():
     # CHAT MEMBER
     # ============================================================
 
+    application.add_handler(TypeHandler(Update, guard_deleted_game_update), group=-2)
+
     application.add_handler(
         ChatMemberHandler(
             bot_chat_member_update,
@@ -292,6 +300,13 @@ async def main():
     # ============================================================
     # COMMANDS
     # ============================================================
+
+    application.add_handler(CommandHandler("dickpukku", dickpukku_command))
+    application.add_handler(CommandHandler("return_gnome", return_gnome_command))
+    application.add_handler(CallbackQueryHandler(
+        dickpukku_callback,
+        pattern=r"^dickpukku:[A-Za-z0-9_-]{22}:(?:start|yes|no)$",
+    ))
 
     application.add_handler(
         CommandHandler(

@@ -222,6 +222,10 @@ async def duel_item_event_callback(
     query = update.callback_query
     if not query or not query.data or not query.from_user:
         return
+    from database import is_deleted_user
+    if is_deleted_user(query.from_user.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
+        return
 
     try:
         event_id = int(query.data.removeprefix(DUEL_ITEM_EVENT_CALLBACK_PREFIX))

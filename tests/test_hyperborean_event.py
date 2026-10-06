@@ -276,7 +276,7 @@ def test_other_dickless_target_keeps_exact_points(monkeypatch, temp_database, tg
     assert len(calls) == 1
 
 
-async def test_callback_restores_event_state_after_claim_error(monkeypatch, fake_context, tg_user):
+async def test_callback_restores_event_state_after_claim_error(monkeypatch, temp_database, fake_context, tg_user):
     from handlers import hyperborean_event as event
 
     event.ACTIVE_HYPERBOREAN_EVENTS.clear()
@@ -292,7 +292,7 @@ async def test_callback_restores_event_state_after_claim_error(monkeypatch, fake
 
 
 @pytest.mark.parametrize("event_type", ["hyperboreic", "arthur"])
-async def test_other_callback_consumes_event_once(monkeypatch, fake_context, tg_user, event_type):
+async def test_other_callback_consumes_event_once(monkeypatch, temp_database, fake_context, tg_user, event_type):
     from handlers import hyperborean_event as event
 
     event.ACTIVE_HYPERBOREAN_EVENTS.clear()

@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from database import get_db
+from database import get_db, is_deleted_user_in_transaction
 
 
 INLINE_ACTION_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -26,6 +26,9 @@ def _digest(token: str) -> str:
 def activate_ball(chat_id: int, user_id: int) -> None:
     """Repeated activation of one chat/user remains one charge and keeps its age."""
     with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(conn.cursor(), user_id):
+            return
         conn.execute(
             """INSERT OR IGNORE INTO elite_ball_activations
                (chat_id, user_id, created_at) VALUES (?, ?, ?)""",
@@ -35,6 +38,9 @@ def activate_ball(chat_id: int, user_id: int) -> None:
 
 def consume_chat_ball(chat_id: int, user_id: int) -> bool:
     with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(conn.cursor(), user_id):
+            return False
         row = conn.execute(
             "SELECT id FROM elite_ball_activations WHERE chat_id = ? AND user_id = ?",
             (chat_id, user_id),
@@ -51,6 +57,9 @@ def create_inline_action(owner_user_id: int, question: str) -> str:
     token = secrets.token_urlsafe(18)
     now = int(time.time())
     with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(conn.cursor(), owner_user_id):
+            raise ValueError("Deleted gnome cannot create inline action")
         conn.execute(
             "DELETE FROM elite_ball_inline_actions WHERE expires_at <= ?", (now,),
         )
@@ -74,6 +83,8 @@ def consume_inline_action(
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(cursor, user_id):
+            return BallActionResult("unavailable")
         row = cursor.execute(
             """SELECT owner_user_id, question, expires_at, consumed_at, answer
                FROM elite_ball_inline_actions WHERE token_digest = ?""",

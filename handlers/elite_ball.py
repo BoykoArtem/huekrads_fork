@@ -65,6 +65,10 @@ async def ball_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user = update.effective_user
     if chat is None or user is None or getattr(user, "is_bot", False):
         return
+    from database import is_deleted_user
+    if is_deleted_user(user.id):
+        await update.message.reply_text(get_text("gnome_deletion.deleted"))
+        return
     await _activate_ball(context, chat.id, user.id)
     if update.message is not None:
         try:
@@ -86,6 +90,10 @@ async def elite_ball_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     ):
         return
 
+    from database import is_deleted_user
+    if is_deleted_user(query.from_user.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
+        return
     await query.answer()
     await _activate_ball(context, chat.id, query.from_user.id)
 

@@ -88,6 +88,9 @@ def _claim_event(event_id: int, chat_id: int, message_id: int, user_id: int, cho
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
+        from database import is_deleted_user_in_transaction
+        if is_deleted_user_in_transaction(cursor, user_id):
+            return "not_registered", None
         row = cursor.execute(
             "SELECT message_id, claimed_by FROM moss_choice_events WHERE id = ? AND chat_id = ?",
             (event_id, chat_id),
@@ -121,6 +124,10 @@ def _claim_event(event_id: int, chat_id: int, message_id: int, user_id: int, cho
 async def moss_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if not query or not query.from_user or not query.message or not update.effective_chat:
+        return
+    from database import is_deleted_user
+    if is_deleted_user(query.from_user.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
         return
     try:
         prefix, event_id_text, choice = query.data.split(":")

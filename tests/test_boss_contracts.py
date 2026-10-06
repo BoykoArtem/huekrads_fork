@@ -7,6 +7,11 @@ import re
 from text_resources import get_text
 
 
+@pytest.fixture(autouse=True)
+def initialized_guard_schema(temp_database):
+    """Exercise boss contracts against the initialized production schema."""
+
+
 def callback_data(markup):
     return [button.callback_data for row in markup.inline_keyboard for button in row]
 

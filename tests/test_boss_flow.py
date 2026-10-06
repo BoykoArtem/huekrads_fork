@@ -121,6 +121,44 @@ def relevant_snapshot(battle):
 
 
 @pytest.mark.asyncio
+async def test_boss_join_rechecks_deleted_user_after_waiting_for_battle_lock(
+    temp_database, monkeypatch, fake_context,
+):
+    import database
+    from handlers import boss_service, duel
+
+    chat_id = -713
+    battle = make_battle([make_participant(2)], phase="join", round_num=0)
+    duel.ACTIVE_BOSS_BATTLES[chat_id] = battle
+    update, query = make_callback_update(chat_id, 1, "boss_join")
+    initial_check_done = asyncio.Event()
+    real_check = boss_service.is_deleted_user
+    checks = 0
+
+    def observed_check(user_id):
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            initial_check_done.set()
+        return real_check(user_id)
+
+    monkeypatch.setattr(boss_service, "is_deleted_user", observed_check)
+    async with battle["lock"]:
+        join = asyncio.create_task(duel.boss_callback(update, fake_context))
+        await asyncio.wait_for(initial_check_done.wait(), 1)
+        assert not join.done()
+        assert database.delete_gnome(1, "user1")
+    await asyncio.wait_for(join, 1)
+
+    assert checks == 2
+    assert set(battle["participants"]) == {2}
+    assert database.get_duel_user_by_id(chat_id, 1) is None
+    query.answer.assert_awaited_once()
+    fake_context.bot.edit_message_text.assert_not_awaited()
+    duel.ACTIVE_BOSS_BATTLES.clear()
+
+
+@pytest.mark.asyncio
 async def test_boss_join_callback_inserts_current_participant_snapshot(
     monkeypatch, fake_context
 ):
@@ -315,7 +353,7 @@ async def test_boss_callback_reports_exact_action_acknowledgements(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def clear_active_boss_battles(tmp_path, monkeypatch):
+def clear_active_boss_battles(tmp_path, monkeypatch, temp_database):
     from handlers import boss_registration, duel
 
     monkeypatch.setattr(boss_registration, "_BOSS_REG_DB_PATH", tmp_path / "registrations.db")

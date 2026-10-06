@@ -506,6 +506,57 @@ def test_pocket_hit_moves_exact_instance_and_creates_one_drop_intent(
     assert len(outbox(temp_database)) == 2
 
 
+@pytest.mark.asyncio
+async def test_old_profile_pocket_worker_cannot_touch_new_inventory(
+    temp_database, monkeypatch, fake_context,
+):
+    finished, final_pub, _ = finish_and_get_final(temp_database, monkeypatch)
+    mark_final_published(CHAT, final_pub)
+    assert database.delete_gnome(2, "player2")
+    assert database.return_gnome_by_id(2) == "returned"
+    with sqlite3.connect(temp_database) as conn:
+        conn.execute(
+            "UPDATE gnome_profile_resets SET reset_at_ms = ? WHERE user_id = ?",
+            (NOW + 5, 2),
+        )
+    database.get_or_create_duel_user(
+        SimpleNamespace(id=2, username="new_player2", first_name="New"), CHAT,
+    )
+    item = database.add_duel_inventory_item(CHAT, 2, "po_lochki")
+    trace = install_rng(monkeypatch)
+
+    await recover_persistent_duel_chat(CHAT, fake_context.bot, now_ms=NOW + 6)
+
+    assert inventory(temp_database) == [(item["id"], 2, item["item_id"])]
+    assert event(temp_database) == []
+    assert trace.trace == []
+    assert get_duel_session(CHAT, finished.session["id"])["pocket_done_at"] == NOW + 6
+    assert list_ready_pocket_duel_sessions(CHAT) == []
+    assert duel_service.process_persistent_duel_pocket_drop(
+        CHAT, finished.session["id"]
+    ).reason == "already_done"
+
+
+def test_current_profile_pocket_still_uses_inventory_after_earlier_reset(
+    temp_database, monkeypatch,
+):
+    finished, final_pub, _ = finish_and_get_final(temp_database, monkeypatch)
+    mark_final_published(CHAT, final_pub)
+    with sqlite3.connect(temp_database) as conn:
+        conn.execute(
+            "INSERT INTO gnome_profile_resets (user_id, reset_at_ms) VALUES (?, ?)",
+            (2, NOW - 1),
+        )
+    item = database.add_duel_inventory_item(CHAT, 2, "po_lochki")
+    trace = install_rng(monkeypatch, [0.0])
+
+    result = duel_service.process_persistent_duel_pocket_drop(CHAT, finished.session["id"])
+
+    assert result.reason == "dropped"
+    assert result.drop["instance_id"] == item["id"]
+    assert [entry[0] for entry in trace.trace] == ["random", "choice"]
+
+
 def test_occupied_slot_spends_existing_roll_and_choice_but_keeps_item(
     temp_database, monkeypatch,
 ):

@@ -92,7 +92,15 @@ def _battle_snapshot(battle: dict, chat_id: int, viewer_user_id: int) -> dict:
 
 def _public_recent_result(result: dict, viewer_user_id: int) -> dict:
     participants = result["participants"]
-    viewer = next((row for row in participants if row["user_id"] == viewer_user_id), None)
+    from database import get_db
+    with get_db() as conn:
+        reset = conn.execute(
+            "SELECT reset_at_ms FROM gnome_profile_resets WHERE user_id = ?",
+            (viewer_user_id,),
+        ).fetchone()
+    current_profile_result = reset is None or result["finished_at"] > reset[0]
+    viewer = next((row for row in participants if row["user_id"] == viewer_user_id), None) \
+        if current_profile_result else None
     hero = next(
         (row for row in participants if row["user_id"] == result["hero_user_id"]),
         None,
@@ -103,7 +111,7 @@ def _public_recent_result(result: dict, viewer_user_id: int) -> dict:
         (row for row in (narrative["deaths"] + narrative["survivors"])
          if row["user_id"] == viewer_user_id),
         None,
-    ) if narrative else None
+    ) if narrative and current_profile_result else None
     return {
         "battle_id": result["battle_id"],
         "boss": {"id": result["boss_id"], "name": result["boss_name"]},
@@ -130,8 +138,8 @@ def _public_recent_result(result: dict, viewer_user_id: int) -> dict:
             "rounds_survived": viewer["rounds_survived"] if viewer else None,
             "death_round": viewer["death_round"] if viewer else None,
             "chronicle": viewer_story,
-            "rewarded": viewer_user_id in result["rewarded_user_ids"],
-            "received_item": bool(loot and loot["recipient_user_id"] == viewer_user_id),
+            "rewarded": bool(current_profile_result and viewer_user_id in result["rewarded_user_ids"]),
+            "received_item": bool(current_profile_result and loot and loot["recipient_user_id"] == viewer_user_id),
         },
     }
 

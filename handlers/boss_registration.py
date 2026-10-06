@@ -7,6 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from config import DUEL_TIMEZONE
+from database import is_deleted_user_in_transaction
 
 
 _BOSS_REG_DB_PATH = Path(__file__).resolve().parent.parent / "bot_database.db"
@@ -43,6 +44,9 @@ def _boss_registration_connect():
         # Serialize migration with registration and consumption.
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(_NEXT_TABLE_SQL)
+        conn.execute("""CREATE TABLE IF NOT EXISTS deleted_users (
+            user_id INTEGER PRIMARY KEY, username TEXT, deleted_at TEXT NOT NULL
+        )""")
         conn.execute("""CREATE TABLE IF NOT EXISTS boss_registration_meta (
             key TEXT PRIMARY KEY
         )""")
@@ -60,7 +64,9 @@ def _boss_registration_connect():
                     INSERT OR IGNORE INTO boss_next_registrations
                         (chat_id, user_id, username, first_name, last_name)
                     SELECT chat_id, user_id, username, first_name, last_name
-                    FROM boss_registrations WHERE reg_date = ? ORDER BY rowid
+                    FROM boss_registrations AS r WHERE reg_date = ?
+                      AND NOT EXISTS (SELECT 1 FROM deleted_users AS d WHERE d.user_id = r.user_id)
+                    ORDER BY rowid
                 """, (_legacy_registration_today(),))
             conn.execute(
                 "INSERT INTO boss_registration_meta (key) VALUES ('next_queue_v1')"
@@ -77,6 +83,8 @@ def _boss_register_user(chat_id, tg_user):
     """Register once for this chat's next actual battle."""
     with _boss_registration_connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(conn.cursor(), tg_user.id):
+            return False
         cursor = conn.execute(
             """INSERT OR IGNORE INTO boss_next_registrations
                (chat_id, user_id, username, first_name, last_name)
@@ -90,7 +98,9 @@ def _boss_get_registered_users(chat_id):
     with _boss_registration_connect() as conn:
         return conn.execute(
             """SELECT user_id, username, first_name, last_name
-               FROM boss_next_registrations WHERE chat_id = ? ORDER BY rowid""",
+               FROM boss_next_registrations AS r WHERE chat_id = ?
+                 AND NOT EXISTS (SELECT 1 FROM deleted_users AS d WHERE d.user_id = r.user_id)
+               ORDER BY rowid""",
             (chat_id,),
         ).fetchall()
 
@@ -101,7 +111,9 @@ def _boss_consume_registrations(chat_id):
         conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
             """SELECT user_id, username, first_name, last_name
-               FROM boss_next_registrations WHERE chat_id = ? ORDER BY rowid""",
+               FROM boss_next_registrations AS r WHERE chat_id = ?
+                 AND NOT EXISTS (SELECT 1 FROM deleted_users AS d WHERE d.user_id = r.user_id)
+               ORDER BY rowid""",
             (chat_id,),
         ).fetchall()
         conn.execute("DELETE FROM boss_next_registrations WHERE chat_id = ?", (chat_id,))
@@ -129,10 +141,17 @@ def _boss_registration_snapshot(chat_id: int, viewer_user_id: int) -> tuple[int,
             params = (viewer_user_id, chat_id, _legacy_registration_today())
         else:
             return 0, False
+        has_deleted_users = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'deleted_users'"
+        ).fetchone()
+        deleted_filter = (
+            " AND NOT EXISTS (SELECT 1 FROM deleted_users AS d WHERE d.user_id = r.user_id)"
+            if has_deleted_users else ""
+        )
         row = conn.execute(
             f"""SELECT COUNT(DISTINCT user_id),
                        COALESCE(MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END), 0)
-                FROM {table} WHERE chat_id = ?{date_filter}""",
+                FROM {table} AS r WHERE chat_id = ?{date_filter}{deleted_filter}""",
             params,
         ).fetchone()
     return int(row[0]), bool(row[1])
@@ -141,6 +160,7 @@ def _boss_registration_snapshot(chat_id: int, viewer_user_id: int) -> tuple[int,
 def _boss_get_registered_chat_ids():
     with _boss_registration_connect() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT chat_id FROM boss_next_registrations"
+            """SELECT DISTINCT chat_id FROM boss_next_registrations AS r
+               WHERE NOT EXISTS (SELECT 1 FROM deleted_users AS d WHERE d.user_id = r.user_id)"""
         ).fetchall()
     return {row[0] for row in rows}

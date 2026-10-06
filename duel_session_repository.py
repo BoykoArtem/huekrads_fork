@@ -287,9 +287,11 @@ def get_latest_finished_participant_duel_session(chat_id: int, user_id: int) -> 
             """SELECT * FROM duel_sessions
                WHERE chat_id = ? AND status = 'finished'
                  AND (player1_user_id = ? OR player2_user_id = ?)
+                 AND created_at > COALESCE(
+                   (SELECT reset_at_ms FROM gnome_profile_resets WHERE user_id = ?), 0)
                  AND json_extract(result_json, '$.kind') = 'finalized'
                ORDER BY id DESC LIMIT 1""",
-            (chat_id, user_id, user_id),
+            (chat_id, user_id, user_id, user_id),
         ).fetchone()
         return _session_from_row(row)
 

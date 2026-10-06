@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from text_resources import get_text
+from database import is_deleted_user
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ async def apply_boss_action(context, chat_id: int, user_id: int, intent: str,
 
     Telegram owns the timers and publication. Both frontends enter here.
     """
+    if is_deleted_user(user_id):
+        return BossActionResult(False, "not_registered")
     from handlers import duel
 
     battle = duel.ACTIVE_BOSS_BATTLES.get(chat_id)
@@ -34,6 +37,8 @@ async def apply_boss_action(context, chat_id: int, user_id: int, intent: str,
     async with battle["lock"]:
         if duel.ACTIVE_BOSS_BATTLES.get(chat_id) is not battle:
             return BossActionResult(False, "stale_battle")
+        if is_deleted_user(user_id):
+            return BossActionResult(False, "not_registered")
         if expected_battle_id is not None and battle.get("battle_id") != expected_battle_id:
             return BossActionResult(False, "stale_battle")
         if expected_message_id is not None and battle["message_id"] != expected_message_id:

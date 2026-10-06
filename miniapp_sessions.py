@@ -6,7 +6,7 @@ import secrets
 import time
 from dataclasses import dataclass
 
-from database import get_db
+from database import get_db, is_deleted_user_in_transaction
 
 
 LAUNCH_TTL_SECONDS = 120
@@ -42,6 +42,9 @@ def create_launch_token(chat_id: int, user_id: int, *, now: int | None = None) -
     issued_at = int(time.time()) if now is None else now
     token = secrets.token_urlsafe(32)
     with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(conn.cursor(), user_id):
+            raise ValueError("Deleted user cannot launch game")
         conn.execute(
             """INSERT INTO miniapp_launch_tokens
                (token_digest, chat_id, user_id, created_at, expires_at)
@@ -83,6 +86,10 @@ def exchange_launch_token(token: str, verified_user_id: int, *,
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(cursor, verified_user_id):
+            if failure_reason is not None:
+                failure_reason.append("deleted_user")
+            return None
         row = cursor.execute(
             """SELECT chat_id, user_id, launch_message_id FROM miniapp_launch_tokens
                WHERE token_digest = ? AND consumed_at IS NULL AND expires_at > ?""",

@@ -24,6 +24,7 @@ from database import (
     get_duel_user_by_id,
     get_duel_user_by_id_in_transaction,
     get_duel_user_by_username,
+    gnome_profile_reset_at_ms_in_transaction,
     restore_unpublished_duel_drop_in_transaction,
     transfer_duel_inventory_item_in_transaction,
 )
@@ -590,6 +591,16 @@ def process_persistent_duel_pocket_drop(
         )
         if final_publication is None or final_publication["status"] != "delivered":
             return PersistentDuelPocketResult("not_published", session)
+        if any(
+            session["created_at"] <= gnome_profile_reset_at_ms_in_transaction(cursor, user_id)
+            for user_id in (session["player1_user_id"], session["player2_user_id"])
+        ):
+            timestamp = utc_unix_milliseconds() if now_ms is None else now_ms
+            if not mark_duel_pocket_done_in_transaction(
+                chat_id, duel_id, timestamp, cursor=cursor,
+            ):
+                raise RuntimeError("Obsolete profile pocket checkpoint could not be stored")
+            return PersistentDuelPocketResult("obsolete_profile", session)
         if not is_module_enabled(chat_id, "duel_random_events"):
             timestamp = utc_unix_milliseconds() if now_ms is None else now_ms
             if not mark_duel_pocket_done_in_transaction(
