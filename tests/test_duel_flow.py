@@ -628,6 +628,53 @@ async def test_duel_command_rejects_ineligible_participant(
     assert message.reply_text.await_count + fake_context.bot.send_message.await_count == 1
 
 
+@pytest.mark.parametrize("zero_user", ("initiator", "opponent"))
+@pytest.mark.parametrize("via_callback", (False, True))
+@pytest.mark.asyncio
+async def test_zero_point_participant_can_start_direct_or_selected_duel(
+    monkeypatch, fixed_duel_database, fake_context, zero_user, via_callback,
+):
+    import database
+    from handlers import duel
+
+    initiator_tg = make_user(211, "initiator")
+    opponent_tg = make_user(212, "opponent")
+    database.get_or_create_duel_user(initiator_tg, CHAT_ID)
+    database.get_or_create_duel_user(opponent_tg, CHAT_ID)
+    zero_id = initiator_tg.id if zero_user == "initiator" else opponent_tg.id
+    with sqlite3.connect(fixed_duel_database) as connection:
+        connection.execute(
+            "UPDATE duel_users SET points = 0 WHERE chat_id = ? AND user_id = ?",
+            (CHAT_ID, zero_id),
+        )
+
+    start_fight = AsyncMock()
+    monkeypatch.setattr(duel, "_start_interactive_fight", start_fight)
+    monkeypatch.setattr(duel.random, "choice", lambda values: values[0])
+    if via_callback:
+        update, query = callback_update(
+            "start_duel_opponent", initiator_tg,
+            SimpleNamespace(delete=AsyncMock()),
+        )
+        await duel.duel_select_callback(update, fake_context)
+        query.answer.assert_awaited_once_with()
+    else:
+        message = SimpleNamespace(
+            from_user=initiator_tg,
+            chat=SimpleNamespace(id=CHAT_ID),
+            chat_id=CHAT_ID,
+            message_id=303,
+            text="/duel @opponent",
+        )
+        fake_context.args = ["@opponent"]
+        await duel.duel_command(SimpleNamespace(message=message), fake_context)
+
+    start_fight.assert_awaited_once()
+    started = start_fight.await_args.kwargs
+    assert started["chat_id"] == CHAT_ID
+    assert started["attacker_data"]["points"] == 0 or started["defender_data"]["points"] == 0
+
+
 def admission_user(user_id, username, *, points=20, dick_stolen_today=False):
     return {
         "user_id": user_id,

@@ -1343,21 +1343,6 @@ async def _process_duel_fight(
 
         return
 
-    if initiator_ineligibility == "no_points":
-
-        bot_msg = await context.bot.send_message(
-            chat_id,
-            get_text("duel.admission.initiator.no_points"),
-        )
-
-        schedule_auto_delete(
-            context,
-            chat_id,
-            [bot_msg.message_id],
-        )
-
-        return
-
     opponent = get_duel_user_by_username(
         target_username,
         chat_id,
@@ -1410,24 +1395,6 @@ async def _process_duel_fight(
             chat_id,
             (
                 get_text("duel.admission.participant.no_dick", title=opp_title)
-            ),
-            parse_mode="HTML",
-        )
-
-        schedule_auto_delete(
-            context,
-            chat_id,
-            [bot_msg.message_id],
-        )
-
-        return
-
-    if opponent_ineligibility == "no_points":
-
-        bot_msg = await context.bot.send_message(
-            chat_id,
-            (
-                get_text("duel.admission.opponent.no_points", title=opp_title)
             ),
             parse_mode="HTML",
         )

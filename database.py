@@ -1975,6 +1975,134 @@ def tame_huecrab_event(
         return "tamed"
 
 
+def list_unannounced_huecrab_claims() -> list[dict]:
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT e.event_id, e.chat_id, e.message_id, e.item_id, e.origin_text,
+                   u.user_id, u.username, u.display_name, u.dwarf_name
+            FROM duel_item_events AS e
+            JOIN duel_users AS u ON u.chat_id = e.chat_id AND u.user_id = e.claimed_by
+            WHERE e.claimed = 1 AND e.autoloot_claimed = 1
+              AND e.autoloot_announced_at IS NULL
+            ORDER BY e.event_id
+            """
+        ).fetchall()
+    return [
+        {
+            "event_id": r[0], "chat_id": r[1], "message_id": r[2],
+            "item_id": r[3], "origin_text": r[4],
+            "owner": {"user_id": r[5], "username": r[6],
+                      "display_name": r[7], "dwarf_name": r[8]},
+        }
+        for r in rows
+    ]
+
+
+def mark_huecrab_claim_announced(event_id: int) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """UPDATE duel_item_events SET autoloot_announced_at = CURRENT_TIMESTAMP
+               WHERE event_id = ? AND claimed = 1 AND autoloot_announced_at IS NULL""",
+            (event_id,),
+        )
+
+
+def has_huecrab(chat_id: int, user_id: int) -> bool:
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT 1 FROM huecrab_owners WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        ).fetchone() is not None
+
+
+def create_huecrab_event(chat_id: int) -> int | None:
+    with get_db() as conn:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO huecrab_events (chat_id) VALUES (?)",
+            (chat_id,),
+        )
+        return cursor.lastrowid if cursor.rowcount == 1 else None
+
+
+def has_active_huecrab_event(chat_id: int) -> bool:
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT 1 FROM huecrab_events WHERE chat_id = ? AND consumed = 0",
+            (chat_id,),
+        ).fetchone() is not None
+
+
+def bind_huecrab_event(event_id: int, message_id: int) -> bool:
+    with get_db() as conn:
+        cursor = conn.execute(
+            """UPDATE huecrab_events SET message_id = ?
+               WHERE event_id = ? AND consumed = 0 AND message_id IS NULL""",
+            (message_id, event_id),
+        )
+        return cursor.rowcount == 1
+
+
+def discard_unpublished_huecrab_event(event_id: int) -> bool:
+    with get_db() as conn:
+        cursor = conn.execute(
+            """DELETE FROM huecrab_events
+               WHERE event_id = ? AND consumed = 0 AND message_id IS NULL""",
+            (event_id,),
+        )
+        return cursor.rowcount == 1
+
+
+def tame_huecrab_event(
+    event_id: int, chat_id: int, user_id: int, message_id: int, tame_decider,
+) -> str:
+    """First registered ownerless attempt consumes the wild pet, win or lose."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        event = cursor.execute(
+            """SELECT consumed FROM huecrab_events
+               WHERE event_id = ? AND chat_id = ? AND message_id = ?""",
+            (event_id, chat_id, message_id),
+        ).fetchone()
+        if event is None or event[0]:
+            return "taken"
+        registered = cursor.execute(
+            "SELECT 1 FROM duel_users WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        ).fetchone()
+        if registered is None:
+            return "not_registered"
+        already_owned = cursor.execute(
+            "SELECT 1 FROM huecrab_owners WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        ).fetchone()
+        if already_owned is not None:
+            return "already_owned"
+        cursor.execute(
+            """UPDATE huecrab_events SET consumed = 1, attempted_by = ?
+               WHERE event_id = ? AND chat_id = ? AND consumed = 0""",
+            (user_id, event_id, chat_id),
+        )
+        if cursor.rowcount != 1:
+            return "taken"
+        if not tame_decider():
+            cursor.execute(
+                "UPDATE huecrab_events SET tamed = 0 WHERE event_id = ?",
+                (event_id,),
+            )
+            return "failed"
+        cursor.execute(
+            "INSERT INTO huecrab_owners (chat_id, user_id) VALUES (?, ?)",
+            (chat_id, user_id),
+        )
+        cursor.execute(
+            "UPDATE huecrab_events SET tamed = 1 WHERE event_id = ?",
+            (event_id,),
+        )
+        return "tamed"
+
+
 def get_duel_top(
     chat_id: int, sort_by: str = "wins", limit: int = 10,
     include_dwarf_name: bool = False,
